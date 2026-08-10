@@ -279,10 +279,19 @@ partir do horário agendado.
 
 A denormalização de `produtoAtivo` na fonte foi aprovada, mas **não fecha**: as
 rules têm `allow update: if false` para `fontes`, então o cliente nunca poderia
-manter o campo sincronizado. A consulta filtra `status` + `comErro` no servidor
-— o índice composto publicado atende pelo prefixo — e o `ativo` do produto é
-aplicado em Python, com cache por produto. Custo zero: o produto é lido na etapa
-de alerta de qualquer forma.
+manter o campo sincronizado. A consulta passou a filtrar `status` + `comErro` no
+servidor, e o `ativo` do produto é aplicado em Python com cache por produto —
+custo zero, já que o produto é lido na etapa de alerta de qualquer forma.
+
+**Erro cometido nessa troca:** eu afirmei que o índice de 3 campos
+(`status`, `comErro`, `produtoAtivo`) atenderia a consulta de 2 campos "pelo
+prefixo". Está errado, e a produção provou com
+`FAILED_PRECONDITION: The query requires an index`. O índice foi criado com
+`density: SPARSE_ALL`, o que significa que um documento só entra nele se tiver
+**todos** os campos indexados — e como `produtoAtivo` deixou de ser gravado,
+o índice estava vazio. Mudar a estratégia de consulta exige mudar o índice na
+mesma passada. O índice correto é `(comErro, status)` em collection group, e o
+de 3 campos foi removido.
 
 ---
 

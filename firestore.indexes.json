@@ -1,17 +1,18 @@
 {
   "indexes": [
     {
+      "_comentario": "listar_fontes_ativas(): status == 'ok' AND comErro == false. O 'ativo' do produto é aplicado em Python, porque as rules impedem o cliente de manter um campo denormalizado na fonte (allow update: if false).",
       "collectionGroup": "fontes",
       "queryScope": "COLLECTION_GROUP",
       "fields": [
-        { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "comErro", "order": "ASCENDING" },
-        { "fieldPath": "produtoAtivo", "order": "ASCENDING" }
+        { "fieldPath": "status", "order": "ASCENDING" }
       ]
     }
   ],
   "fieldOverrides": [
     {
+      "_comentario": "listar_fontes_pendentes(): status == 'pendente' em collection group. Campo único exige fieldOverrides, não o array indexes.",
       "collectionGroup": "fontes",
       "fieldPath": "status",
       "indexes": [
