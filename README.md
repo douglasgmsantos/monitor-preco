@@ -20,16 +20,20 @@ Não há busca nem descoberta de produtos: você informa as URLs.
 | 2 | `coletor/repositorio.py` | ✅ 28 testes contra o emulador |
 | 3 | `coletor/coleta.py` | ✅ 24 testes com `respx` |
 | 4 | `coletor/alertas.py`, `notificador.py` | ✅ 31 testes, sem rede |
-| 5 | `coletor/main.py`, workflow do Actions | ❌ **não implementada** |
+| 5 | `coletor/main.py`, workflow do Actions | ✅ código pronto; portão oficial (`workflow_dispatch`) pendente |
 | 6 | front (`publico/`) | ✅ publicado em https://report-price.web.app |
 
 ```
 166 passed, 1 skipped
 ```
 
-**Sem a Fase 5 o sistema não coleta nada.** As fontes cadastradas ficam
-permanentemente em "validando fonte…", porque nada as promove a `ok`. O front e
-todo o núcleo estão prontos e testados; falta o entrypoint e o agendamento.
+O ciclo foi validado ponta a ponta contra o emulador, usando uma URL real de
+loja: fonte pendente → coleta HTTP → parser → buckets no Firestore → máquina de
+estados → mensagem formatada. A janela de 6h bloqueia execução fora de hora e o
+cooldown de 24h cala a renotificação, ambos verificados.
+
+O portão da §13 para esta fase é um `workflow_dispatch` real no GitHub, que
+depende dos secrets estarem cadastrados e do workflow estar na branch padrão.
 
 ---
 
@@ -305,8 +309,13 @@ de alerta de qualquer forma.
 
 ## O que falta
 
-- **Fase 5:** `coletor/main.py` e `.github/workflows/coletor.yml`.
+- **Portão da Fase 5:** disparar o `workflow_dispatch` no GitHub e ver o ciclo
+  rodar contra o Firestore de produção. Exige o workflow na branch padrão e os
+  três secrets cadastrados.
 - Verificação visual do front em navegador (feita pelo usuário, não por mim).
 - Confirmar que o provedor Google de login está habilitado — a API pública não
   permite sondar isso.
 - Conferir o consumo no console do Firebase após 48h de operação.
+- Não existe `tests/test_main.py`: a lista de arquivos da §3 não prevê esse
+  arquivo e o portão da fase é a execução real. `esta_na_hora` e o agrupamento
+  por produto estão cobertos apenas pela verificação manual no emulador.
