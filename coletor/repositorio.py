@@ -119,14 +119,23 @@ class _CredencialEmulador(credentials.Base):
         return google.auth.credentials.AnonymousCredentials()
 
 
-def _credencial_de_base64(sa_base64: str) -> credentials.Certificate:
-    """Decodifica a service account em memória. Nunca toca o disco."""
+def _credencial_de_base64(sa_base64: str) -> tuple[credentials.Certificate, dict]:
+    """Decodifica a service account em memória. Nunca toca o disco.
+
+    Devolve também os metadados NÃO sigilosos (client_email, project_id), que
+    são o que permite diagnosticar erro de IAM sem expor a chave.
+    """
     try:
         bruto = base64.b64decode(sa_base64, validate=False)
         dados = json.loads(bruto)
     except (binascii.Error, ValueError) as erro:
         raise ValueError("FIREBASE_SA_BASE64 inválida") from erro
-    return credentials.Certificate(dados)
+    metadados = {
+        "client_email": dados.get("client_email"),
+        "project_id": dados.get("project_id"),
+        "private_key_id": (dados.get("private_key_id") or "")[:8],
+    }
+    return credentials.Certificate(dados), metadados
 
 
 def inicializar(
@@ -138,11 +147,19 @@ def inicializar(
     if usando_emulador:
         credencial = _CredencialEmulador()
         projeto = project_id or os.environ.get("GCLOUD_PROJECT") or "demo-monitor"
+        logger.info("usando o emulador do Firestore em %s", os.environ["FIRESTORE_EMULATOR_HOST"])
     else:
         if not sa_base64:
             raise ValueError("FIREBASE_SA_BASE64 ausente e emulador não configurado")
-        credencial = _credencial_de_base64(sa_base64)
-        projeto = project_id
+        credencial, metadados = _credencial_de_base64(sa_base64)
+        projeto = project_id or metadados["project_id"]
+        # client_email e project_id não são segredo, e sem eles é impossível
+        # diagnosticar PERMISSION_DENIED sem abrir a chave.
+        logger.info(
+            "service account: %s · projeto: %s · chave: %s…",
+            metadados["client_email"], metadados["project_id"],
+            metadados["private_key_id"],
+        )
 
     opcoes = {"projectId": projeto} if projeto else None
     try:

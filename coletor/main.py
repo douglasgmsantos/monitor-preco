@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import httpx
+from google.api_core.exceptions import PermissionDenied
 
 from coletor import alertas, config
 from coletor.coleta import LimitadorPorHost, coletar_fontes, validar_fonte_pendente
@@ -214,6 +215,19 @@ def principal() -> int:
 
     try:
         resumo = asyncio.run(executar_ciclo(cfg=cfg))
+    except PermissionDenied:
+        # O Admin SDK ignora as security rules, então isto NUNCA é problema de
+        # firestore.rules — é IAM. A service account autenticou (o token foi
+        # emitido) mas não tem papel de acesso ao Firestore.
+        logger.error(
+            "PERMISSION_DENIED no Firestore. O Admin SDK ignora as security "
+            "rules, então o problema é IAM, não firestore.rules.\n"
+            "Conserto: em console.cloud.google.com/iam-admin/iam conceda à "
+            "service account registrada acima o papel 'Cloud Datastore User' "
+            "(roles/datastore.user). A linha 'service account: …' no início "
+            "deste log diz qual conta precisa do papel."
+        )
+        return 1
     except Exception:
         logger.exception("ciclo abortado por erro inesperado")
         return 1
