@@ -415,6 +415,36 @@ class Repositorio:
 
     # --- média de 30 dias --------------------------------------------------
 
+    def media_historica_centavos(
+        self, produto: Produto, fonte_id: str | None = None
+    ) -> int | None:
+        """Média de TODO o histórico disponível, a partir do rollup `diario`.
+
+        Ponderada por amostra (`soma`/`n` acumulados), nunca média de médias.
+        Devolve None enquanto não houver `DIAS_DA_MEDIA` dias distintos: com
+        poucos dias a média é praticamente o preço atual, e qualquer gatilho
+        baseado nela dispararia por ruído.
+        """
+        soma_total = 0
+        n_total = 0
+        dias: set[str] = set()
+
+        for snapshot in produto.ref.collection(COLECAO_DIARIO).stream():
+            dados = snapshot.to_dict() or {}
+            if fonte_id is not None and dados.get("fonteId") != fonte_id:
+                continue
+            for chave, valores in (dados.get("dias") or {}).items():
+                n = valores.get("n") or 0
+                if n <= 0:
+                    continue
+                soma_total += valores.get("soma") or 0
+                n_total += n
+                dias.add(f"{dados.get('ano')}{chave}")
+
+        if len(dias) < DIAS_DA_MEDIA or n_total <= 0:
+            return None
+        return soma_total // n_total
+
     def media_30_dias_centavos(
         self, produto: Produto, fonte_id: str | None = None
     ) -> int | None:

@@ -12,6 +12,7 @@ TETO_CENTAVOS_PADRAO = 100_000_000
 INTERVALO_COLETA_HORAS_PADRAO = 6
 LIMIAR_SANIDADE_PADRAO = "0.70"
 USER_AGENT_PADRAO = "MonitorPrecos/1.0 (uso pessoal)"
+MARGEM_MEDIA_PCT_PADRAO = 10
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,7 @@ class Config:
     limiar_sanidade: str
     teto_centavos: int
     user_agent: str
+    margem_media_pct: int = MARGEM_MEDIA_PCT_PADRAO
 
 
 def carregar() -> Config:
@@ -38,4 +40,7 @@ def carregar() -> Config:
         limiar_sanidade=os.environ.get("LIMIAR_SANIDADE", LIMIAR_SANIDADE_PADRAO),
         teto_centavos=int(os.environ.get("TETO_CENTAVOS", TETO_CENTAVOS_PADRAO)),
         user_agent=os.environ.get("USER_AGENT", USER_AGENT_PADRAO),
+        margem_media_pct=int(
+            os.environ.get("MARGEM_MEDIA_PCT", MARGEM_MEDIA_PCT_PADRAO)
+        ),
     )

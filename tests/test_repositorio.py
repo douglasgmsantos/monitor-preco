@@ -471,6 +471,60 @@ def test_media_com_30_dias_de_historico(repositorio, cenario):
     assert repositorio.media_30_dias_centavos(produto) == 100_000
 
 
+def test_media_historica_exige_30_dias(repositorio, cenario):
+    fonte = cenario()
+    hoje = datetime.now(timezone.utc)
+    for deslocamento in range(29):
+        repositorio.registrar_leitura(
+            fonte, sucesso(100_000), False, agora=hoje - timedelta(days=deslocamento)
+        )
+    produto = repositorio.carregar_produto(fonte.produto_ref)
+    assert repositorio.media_historica_centavos(produto) is None
+
+    repositorio.registrar_leitura(
+        fonte, sucesso(100_000), False, agora=hoje - timedelta(days=29)
+    )
+    assert repositorio.media_historica_centavos(produto) == 100_000
+
+
+def test_media_historica_cobre_alem_de_30_dias(repositorio, cenario):
+    """Diferente da média de 30 dias, esta olha TODO o histórico."""
+    fonte = cenario()
+    hoje = datetime.now(timezone.utc)
+    # 40 dias a 100.000 e mais 40 dias antigos a 200.000
+    for deslocamento in range(40):
+        repositorio.registrar_leitura(
+            fonte, sucesso(100_000), False, agora=hoje - timedelta(days=deslocamento)
+        )
+    for deslocamento in range(40, 80):
+        repositorio.registrar_leitura(
+            fonte, sucesso(200_000), False, agora=hoje - timedelta(days=deslocamento)
+        )
+
+    produto = repositorio.carregar_produto(fonte.produto_ref)
+    historica = repositorio.media_historica_centavos(produto)
+    trinta_dias = repositorio.media_30_dias_centavos(produto)
+
+    assert trinta_dias == 100_000                       # só a janela recente
+    assert historica == (40 * 100_000 + 40 * 200_000) // 80
+    assert historica == 150_000
+
+
+def test_media_historica_ignora_suspeitas_e_falhas(repositorio, cenario):
+    fonte = cenario()
+    hoje = datetime.now(timezone.utc)
+    for deslocamento in range(30):
+        repositorio.registrar_leitura(
+            fonte, sucesso(100_000), False, agora=hoje - timedelta(days=deslocamento)
+        )
+    # lixo que não pode entrar no rollup
+    repositorio.registrar_leitura(fonte, sucesso(1), True, agora=hoje)
+    repositorio.registrar_leitura(fonte, falha(), False, agora=hoje)
+
+    produto = repositorio.carregar_produto(fonte.produto_ref)
+    assert repositorio.media_historica_centavos(produto) == 100_000
+
+
 def test_media_e_inteira_e_ponderada_pelas_amostras(repositorio, cenario):
     fonte = cenario()
     hoje = datetime.now(timezone.utc)

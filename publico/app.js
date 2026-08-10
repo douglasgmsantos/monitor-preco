@@ -197,17 +197,19 @@ onAuthStateChanged(auth, (usuario) => {
 const LOJAS = [
   { nome: "KaBuM",         dominios: ["kabum.com.br"] },
   { nome: "Terabyte Shop", dominios: ["terabyteshop.com.br"] },
-  { nome: "Pichau",        dominios: ["pichau.com.br"] },
   { nome: "Carrefour",     dominios: ["carrefour.com.br"] },
 ];
 const LOJA_OUTRA = "__outra__";
 
-/** Domínios que eu confirmei serem incompatíveis com esta arquitetura. */
+/** Domínios confirmadamente incompatíveis, com o motivo verificado. */
 const DOMINIOS_INCOMPATIVEIS = [
   { padrao: /(^|\.)amazon\.com\.br$/, motivo: "a Amazon não publica JSON-LD nas páginas de produto" },
   { padrao: /(^|\.)mercadolivre\.com\.br$/, motivo: "o Mercado Livre monta a página por JavaScript; o HTML não traz JSON-LD" },
   { padrao: /(^|\.)magazineluiza\.com\.br$/, motivo: "o Magazine Luiza bloqueia requisições automatizadas (HTTP 403)" },
   { padrao: /(^|\.)magalu\.com\.br$/, motivo: "o Magalu bloqueia requisições automatizadas (HTTP 403)" },
+  // A Pichau responde de IP residencial mas recusa o datacenter onde o coletor
+  // roda. Como o coletor SÓ roda de lá, para este sistema ela é inviável.
+  { padrao: /(^|\.)pichau\.com\.br$/, motivo: "a Pichau recusa requisições do datacenter onde o coletor roda (HTTP 403)" },
 ];
 
 function hostDaUrl(url) {
@@ -495,6 +497,9 @@ function renderizarLista() {
         ${seloDaFonte(fonte)}
         <a class="endereco" href="${esc(fonte.url)}" target="_blank" rel="noopener noreferrer"
            title="${esc(fonte.url)}">${esc(encurtarUrl(fonte.url))}</a>
+        <button class="discreto editar-fonte" data-produto="${esc(produto.id)}"
+                data-fonte="${esc(fonte.id)}" data-url="${esc(fonte.url)}"
+                data-loja="${esc(fonte.loja)}" title="Editar o link">✎</button>
         ${fonteQuebrada(fonte) ? `
           <button class="discreto tentar-fonte" data-produto="${esc(produto.id)}"
                   data-fonte="${esc(fonte.id)}" title="Volta a fonte para a fila de validação">
@@ -530,7 +535,8 @@ function renderizarLista() {
       </div>`;
 
     cartao.addEventListener("click", (evento) => {
-      if (evento.target.closest(".remover-fonte, .alternar-ativo, .tentar-fonte")) return;
+      if (evento.target.closest(
+        ".remover-fonte, .alternar-ativo, .tentar-fonte, .editar-fonte")) return;
       idSelecionado = produto.id;
       renderizarLista();
       carregarHistorico();
@@ -543,6 +549,10 @@ function renderizarLista() {
       const { produto, fonte } = botao.dataset;
       await deleteDoc(doc(db, `usuarios/${uid}/produtos/${produto}/fontes/${fonte}`));
     });
+  });
+
+  lista.querySelectorAll(".editar-fonte").forEach((botao) => {
+    botao.addEventListener("click", () => editarFonte(botao.dataset));
   });
 
   lista.querySelectorAll(".tentar-fonte").forEach((botao) => {
@@ -581,6 +591,57 @@ function renderizarLista() {
       }
     });
   });
+}
+
+/**
+ * Edita a URL de uma fonte já cadastrada.
+ *
+ * A fonte volta para `pendente`: quem decide se a nova URL presta é o coletor,
+ * não o front. O histórico da fonte é PRESERVADO — na maioria dos casos a
+ * edição corrige um slug ou tira parâmetros de rastreio do mesmo produto. Se a
+ * URL passar a apontar para outro produto, a guarda de sanidade do coletor
+ * marca a leitura discrepante como suspeita, e leitura suspeita fica fora do
+ * gráfico e não dispara alerta.
+ */
+async function editarFonte({ produto, fonte, url, loja }) {
+  const nova = prompt(
+    `Editar o link de ${loja}.\n\n` +
+    `A fonte volta para validação e o histórico é mantido. ` +
+    `Se a URL for de outro produto, prefira remover e cadastrar de novo.`,
+    url,
+  );
+  if (nova === null) return;
+
+  const limpa = nova.trim();
+  if (limpa === url) return;
+  if (!/^https:\/\/.+/.test(limpa)) {
+    alert("A URL precisa começar com https://");
+    return;
+  }
+  const incompativel = motivoDeIncompatibilidade(limpa);
+  if (incompativel) {
+    alert(`Essa loja não pode ser monitorada: ${incompativel}.`);
+    return;
+  }
+  if (!hostCombinaComLoja(limpa, loja)) {
+    const host = hostDaUrl(limpa);
+    if (!confirm(`A URL é de ${host}, e a fonte está cadastrada como ${loja}. Continuar?`)) {
+      return;
+    }
+  }
+
+  try {
+    await updateDoc(doc(db, `usuarios/${uid}/produtos/${produto}/fontes/${fonte}`), {
+      url: limpa,
+      status: "pendente",
+      motivoInvalida: null,
+      falhasSeguidas: 0,
+      comErro: false,
+    });
+  } catch (erro) {
+    console.error("falha ao editar a fonte", erro);
+    alert(`Não foi possível editar: ${erro.message || erro}`);
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -203,15 +203,32 @@ def test_retentativa_nao_promove_para_ok(cenario):
     assert not permitido(resposta)
 
 
-def test_retentativa_nao_troca_a_url(cenario):
+def test_dono_edita_a_url_da_fonte(cenario):
+    """Editar link é reenfileirar com URL nova — mesma transição."""
     resposta = escrever(
         "u1", CAMINHO_FONTE,
-        dict(RETENTATIVA, url={"stringValue": "https://outra.example/p"}),
+        dict(RETENTATIVA, url={"stringValue": "https://kabum.com.br/p/999"}),
+    )
+    assert permitido(resposta)
+    assert cenario.get().to_dict()["url"] == "https://kabum.com.br/p/999"
+
+
+def test_edicao_exige_https(cenario):
+    resposta = escrever(
+        "u1", CAMINHO_FONTE,
+        dict(RETENTATIVA, url={"stringValue": "http://kabum.com.br/p/999"}),
     )
     assert not permitido(resposta)
 
 
-def test_retentativa_nao_injeta_preco(cenario):
+def test_edicao_nao_aceita_loja_vazia(cenario):
+    resposta = escrever(
+        "u1", CAMINHO_FONTE, dict(RETENTATIVA, loja={"stringValue": ""})
+    )
+    assert not permitido(resposta)
+
+
+def test_reenfileiramento_nao_injeta_preco(cenario):
     resposta = escrever(
         "u1", CAMINHO_FONTE,
         dict(RETENTATIVA, ultimoPrecoCentavos={"integerValue": "1"}),
@@ -219,7 +236,12 @@ def test_retentativa_nao_injeta_preco(cenario):
     assert not permitido(resposta)
 
 
-def test_fonte_saudavel_nao_pode_ser_reenfileirada(cenario):
-    """A brecha vale só para fonte QUEBRADA."""
+def test_fonte_saudavel_pode_ser_reenfileirada(cenario):
+    """Editar o link de uma fonte que FUNCIONA é caso de uso legítimo.
+
+    Antes a regra exigia fonte quebrada; foi afrouxado de propósito para
+    permitir corrigir um link bom. O custo é uma revalidação extra, e promover
+    para 'ok' continua sendo exclusividade do coletor.
+    """
     cenario.update({"status": "ok", "motivoInvalida": None, "comErro": False})
-    assert not permitido(escrever("u1", CAMINHO_FONTE, RETENTATIVA))
+    assert permitido(escrever("u1", CAMINHO_FONTE, RETENTATIVA))

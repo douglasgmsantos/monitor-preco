@@ -79,7 +79,8 @@ async def processar_pendentes(
 
 
 def avaliar_alertas(
-    repositorio: Repositorio, notificador, coletas, agora: datetime
+    repositorio: Repositorio, notificador, coletas, agora: datetime,
+    margem_media_pct: int = 10,
 ) -> int:
     """Agrupa as leituras por produto e roda a máquina de estados em cada um."""
     por_produto = defaultdict(list)
@@ -115,7 +116,8 @@ def avaliar_alertas(
                 for item in itens
             ]
             decisao = alertas.processar(
-                produto, leituras, agora, repositorio, notificador
+                produto, leituras, agora, repositorio, notificador,
+                margem_media_pct=margem_media_pct,
             )
             logger.info(
                 "produto %s: %s -> %s%s",
@@ -187,7 +189,7 @@ async def executar_ciclo(
             )
             resumo["coletadas"] = len(coletas)
             resumo["notificados"] = avaliar_alertas(
-                repositorio, notificador, coletas, agora
+                repositorio, notificador, coletas, agora, cfg.margem_media_pct
             )
 
         repositorio.gravar_controle(agora)

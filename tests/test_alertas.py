@@ -11,6 +11,7 @@ from coletor.alertas import (
     avaliar,
     calcular_gatilho,
     formatar_reais,
+    limite_pela_media,
     montar_mensagem,
     processar,
 )
@@ -48,6 +49,7 @@ class LeituraFalsa:
 @dataclass
 class RepositorioFalso:
     media: int | None = None
+    media_hist: int | None = None
     estados: list = field(default_factory=list)
 
     def atualizar_estado_alerta(self, produto, estado, preco_centavos, alertado_em):
@@ -55,6 +57,9 @@ class RepositorioFalso:
 
     def media_30_dias_centavos(self, produto):
         return self.media
+
+    def media_historica_centavos(self, produto):
+        return self.media_hist
 
 
 # --- A fórmula do gatilho ----------------------------------------------------
@@ -291,6 +296,121 @@ def test_nao_notifica_vinte_vezes_abaixo_do_alvo():
         instante += timedelta(hours=1)
 
     assert len(notificador.mensagens) == 1
+
+
+# --- Segundo gatilho: abaixo da média histórica ------------------------------
+
+
+@pytest.mark.parametrize(
+    "media, margem, esperado",
+    [
+        (200_000, 10, 180_000),   # 10% abaixo de 2.000,00
+        (200_000, 0, 200_000),    # sem margem, o limite é a própria média
+        (100_001, 10, 90_000),    # divisão inteira trunca
+        (None, 10, None),         # sem histórico, sem gatilho
+        (0, 10, None),
+        (200_000, 100, None),     # margem inválida desliga o gatilho
+        (200_000, -1, None),
+    ],
+)
+def test_limite_pela_media(media, margem, esperado):
+    assert limite_pela_media(media, margem) == esperado
+
+
+def test_notifica_abaixo_da_media_mesmo_acima_do_alvo():
+    """O preço não atingiu o alvo, mas está 10% abaixo da média histórica."""
+    produto = ProdutoFalso(estado=ESTADO_ACIMA)   # gatilho = 110.000
+    decisao = avaliar(
+        produto, [LeituraFalsa(preco_centavos=170_000)], AGORA,
+        media_historica_centavos=200_000,          # limite = 180.000
+    )
+
+    assert decisao.notificar is True
+    assert decisao.motivo == "abaixo_da_media"
+    assert decisao.gatilho_usado == "media"
+    assert decisao.limite_da_media_centavos == 180_000
+
+
+def test_nao_notifica_se_a_media_nao_justifica():
+    produto = ProdutoFalso(estado=ESTADO_ACIMA)
+    decisao = avaliar(
+        produto, [LeituraFalsa(preco_centavos=190_000)], AGORA,
+        media_historica_centavos=200_000,          # limite = 180.000
+    )
+
+    assert decisao.notificar is False
+    assert decisao.motivo == "acima_do_gatilho"
+
+
+def test_alvo_prevalece_quando_e_mais_generoso():
+    """Se o alvo já é mais alto que o limite da média, o gatilho é o alvo."""
+    produto = ProdutoFalso(estado=ESTADO_ACIMA)   # gatilho = 110.000
+    decisao = avaliar(
+        produto, [LeituraFalsa(preco_centavos=105_000)], AGORA,
+        media_historica_centavos=100_000,          # limite = 90.000 < 110.000
+    )
+
+    assert decisao.notificar is True
+    assert decisao.gatilho_usado == "alvo"
+    assert decisao.motivo == "atingiu_alvo"
+
+
+def test_sem_media_o_comportamento_e_o_de_antes():
+    produto = ProdutoFalso(estado=ESTADO_ACIMA)
+    decisao = avaliar(produto, [LeituraFalsa(preco_centavos=170_000)], AGORA)
+    assert decisao.notificar is False
+    assert decisao.gatilho_usado == "alvo"
+
+
+def test_rearma_considerando_o_gatilho_da_media():
+    """Rearmar exige subir acima do MAIOR dos dois gatilhos."""
+    produto = ProdutoFalso(
+        estado=ESTADO_EM_ALERTA, ultimo_preco_alertado_centavos=170_000
+    )
+    # 175.000 está acima do alvo (110.000) mas ainda abaixo do limite da média
+    decisao = avaliar(
+        produto, [LeituraFalsa(preco_centavos=175_000)], AGORA,
+        media_historica_centavos=200_000,          # limite = 180.000
+    )
+    assert decisao.novo_estado == ESTADO_EM_ALERTA   # NÃO rearmou
+    assert decisao.motivo == "sem_queda"
+
+    # 185.000 passa dos dois
+    decisao = avaliar(
+        produto, [LeituraFalsa(preco_centavos=185_000)], AGORA,
+        media_historica_centavos=200_000,
+    )
+    assert decisao.novo_estado == ESTADO_ACIMA
+    assert decisao.motivo == "rearmou"
+
+
+def test_mensagem_da_media_nao_mente_sobre_o_alvo():
+    produto = ProdutoFalso()
+    repositorio = RepositorioFalso(media=None, media_hist=200_000)
+    notificador = NotificadorMemoria()
+
+    processar(produto, [LeituraFalsa(preco_centavos=170_000)], AGORA,
+              repositorio, notificador)
+
+    (mensagem,) = notificador.mensagens
+    assert "Abaixo da média histórica" in mensagem
+    assert "Preço atingido" not in mensagem
+    assert "(média: R$ 2.000,00)" in mensagem
+    assert "alvo:" not in mensagem
+
+
+def test_mensagem_do_alvo_continua_igual():
+    produto = ProdutoFalso()
+    repositorio = RepositorioFalso(media=None, media_hist=200_000)
+    notificador = NotificadorMemoria()
+
+    # 105.000 atinge o alvo (110.000) E está abaixo do limite da média
+    processar(produto, [LeituraFalsa(preco_centavos=105_000)], AGORA,
+              repositorio, notificador)
+
+    (mensagem,) = notificador.mensagens
+    assert "🔻 Preço atingido" in mensagem
+    assert "(alvo: R$ 1.000,00)" in mensagem
 
 
 # --- Formatação --------------------------------------------------------------

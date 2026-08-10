@@ -31,5 +31,6 @@ jobs:
           INTERVALO_COLETA_HORAS: '6'
           LIMIAR_SANIDADE:        '0.70'
           TETO_CENTAVOS:          '100000000'
+          MARGEM_MEDIA_PCT:       '10'
           USER_AGENT:             'MonitorPrecos/1.0 (uso pessoal)'
         run: python -m coletor.main
