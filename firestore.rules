@@ -1,0 +1,59 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function ehDono(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    function produtoValido() {
+      let d = request.resource.data;
+      return d.nome is string && d.nome.size() > 0 && d.nome.size() <= 200
+          && d.precoAlvoCentavos is int && d.precoAlvoCentavos > 0
+          && d.toleranciaPct is int
+          && d.toleranciaPct >= 0 && d.toleranciaPct <= 100
+          && d.precoGatilhoCentavos is int
+          && d.precoGatilhoCentavos >= d.precoAlvoCentavos
+          && d.ativo is bool;
+    }
+
+    function camposDoCliente() {
+      return ['nome', 'precoAlvoCentavos', 'toleranciaPct',
+              'precoGatilhoCentavos', 'ativo'];
+    }
+
+    match /usuarios/{uid} {
+
+      match /produtos/{produtoId} {
+        allow read, delete: if ehDono(uid);
+        allow create: if ehDono(uid) && produtoValido()
+                      && request.resource.data.estado == 'ACIMA'
+                      && request.resource.data.ultimoAlertaEm == null;
+        allow update: if ehDono(uid) && produtoValido()
+                      && request.resource.data.diff(resource.data)
+                           .affectedKeys().hasOnly(camposDoCliente());
+
+        match /fontes/{fonteId} {
+          allow read, delete: if ehDono(uid);
+          // o cliente só cria fonte em estado pendente; quem promove é o coletor
+          allow create: if ehDono(uid)
+                        && request.resource.data.status == 'pendente'
+                        && request.resource.data.url is string
+                        && request.resource.data.url.matches('https://.*')
+                        && request.resource.data.loja is string
+                        && request.resource.data.falhasSeguidas == 0
+                        && request.resource.data.comErro == false;
+          allow update: if false;
+        }
+
+        match /historico/{docId} { allow read: if ehDono(uid); allow write: if false; }
+        match /diario/{docId}    { allow read: if ehDono(uid); allow write: if false; }
+      }
+
+      match /sistema/{docId} { allow read: if ehDono(uid); allow write: if false; }
+    }
+
+    match /{document=**} { allow read, write: if false; }
+  }
+}

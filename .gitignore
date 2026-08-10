@@ -1,0 +1,20 @@
+# Segredos — o repositório deste projeto é PÚBLICO por exigência da seção 4.
+# Nada aqui pode ser versionado.
+.env
+.env.local
+*.json.key
+chave-privada*.json
+*serviceaccount*.json
+*service-account*.json
+
+# Ambiente
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Firebase
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log

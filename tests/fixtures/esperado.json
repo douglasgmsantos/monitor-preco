@@ -1,0 +1,60 @@
+{
+  "_sobre": {
+    "origem": "Páginas capturadas de lojas brasileiras reais em 2026-08-10.",
+    "gabarito": "Os valores abaixo foram lidos do bloco application/ld+json cru de cada página, não da saída do parser.",
+    "captura": "HTTP simples com User-Agent de navegador. As 4 lojas também respondem com o User-Agent honesto do coletor (MonitorPrecos/1.0), sem bloqueio.",
+    "aviso": "São fotografias de um instante. Se uma loja mudar o markup, a fixture continua válida como caso de teste — não a recapture para 'consertar' um teste vermelho sem antes entender o que mudou."
+  },
+
+  "loja_a_produto.html": {
+    "loja": "KaBuM",
+    "url": "https://www.kabum.com.br/produto/109720",
+    "nome": "iPad 7 4G, Tela 10.2´, 32GB, Prata - MW6C2BZ/A",
+    "price_cru": 3499.9,
+    "tipo_do_price": "float",
+    "availability_cru": "https://schema.org/OutOfStock",
+    "interesse": "price como número de ponto flutuante; produto esgotado",
+    "preco_centavos": 349990,
+    "disponivel": false,
+    "origem": "j"
+  },
+
+  "loja_b_produto.html": {
+    "loja": "Terabyte Shop",
+    "url": "https://www.terabyteshop.com.br/produto/25101/placa-de-video-xfx-amd-radeon-rx-7600-speedster-qick-308-8gb-gddr6-fsr-ray-tracing-rx-76pqickby",
+    "nome": "Placa de Vídeo XFX AMD Radeon RX 7600 Speedster QICK 308, 8GB, GDDR6",
+    "price_cru": "1789.99",
+    "tipo_do_price": "string en-US",
+    "availability_cru": "http://schema.org/InStock",
+    "interesse": "3 blocos ld+json (Product, Organization, WebSite); availability em http://; MonetaryAmount aninhado em shippingDetails que não pode ser confundido com o preço",
+    "preco_centavos": 178999,
+    "disponivel": true,
+    "origem": "j"
+  },
+
+  "loja_c_produto.html": {
+    "loja": "Pichau",
+    "url": "https://www.pichau.com.br/placa-de-video-msi-geforce-rtx-5090-gaming-trio-oc-32gb-gddr7-512-bit-912-v530-070-nac",
+    "nome": "Placa de Video MSI GeForce RTX 5090 Gaming Trio OC, 32GB, GDDR7, 512-bit",
+    "price_cru": "34117.64",
+    "tipo_do_price": "string en-US",
+    "availability_cru": "https://schema.org/InStock",
+    "interesse": "o Product é o SEGUNDO bloco, atrás de um BreadcrumbList — exige varrer todos os blocos",
+    "preco_centavos": 3411764,
+    "disponivel": true,
+    "origem": "j"
+  },
+
+  "loja_d_produto.html": {
+    "loja": "Carrefour",
+    "url": "https://www.carrefour.com.br/produto/apple-macbook-air-136-pol-m4-cpu-de-10-nucleos-gpu-de-10-nucleos-16gb-ram-512gb-ssd-meia-noite",
+    "nome": "Apple Macbook Air 13,6 pol M4",
+    "price_cru": 9990,
+    "tipo_do_price": "int",
+    "availability_cru": "http://schema.org/InStock",
+    "interesse": "price como inteiro sem casas decimais — R$ 9.990,00, não R$ 99,90",
+    "preco_centavos": 999000,
+    "disponivel": true,
+    "origem": "j"
+  }
+}
