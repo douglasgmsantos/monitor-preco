@@ -256,6 +256,21 @@ class Repositorio:
             }
         )
 
+    def registrar_tentativa_de_validacao(self, fonte: Fonte, motivo: str) -> None:
+        """Falha de transporte na validação: conta a tentativa e segue pendente.
+
+        Mantém `status: pendente` de propósito — a URL pode estar boa e a loja
+        ter recusado o IP do runner. O front mostra "validando fonte…" com o
+        último motivo, e a próxima execução tenta de novo.
+        """
+        fonte.ref.update(
+            {
+                "falhasSeguidas": firestore.Increment(1),
+                "motivoInvalida": motivo,
+                "ultimaColetaEm": firestore.SERVER_TIMESTAMP,
+            }
+        )
+
     def marcar_fonte_com_erro(self, fonte: Fonte) -> None:
         fonte.ref.update({"comErro": True})
 

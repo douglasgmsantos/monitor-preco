@@ -42,6 +42,7 @@ class RepositorioFalso:
     validas: list = field(default_factory=list)
     invalidas: list = field(default_factory=list)
     com_erro: list = field(default_factory=list)
+    tentativas: list = field(default_factory=list)
 
     def registrar_leitura(self, fonte, resultado, suspeito):
         self.leituras.append((fonte.id, resultado, suspeito))
@@ -51,6 +52,9 @@ class RepositorioFalso:
 
     def marcar_fonte_invalida(self, fonte, motivo):
         self.invalidas.append((fonte.id, motivo))
+
+    def registrar_tentativa_de_validacao(self, fonte, motivo):
+        self.tentativas.append((fonte.id, motivo))
 
     def marcar_fonte_com_erro(self, fonte):
         self.com_erro.append(fonte.id)
@@ -392,6 +396,68 @@ async def test_fonte_pendente_impossivel_de_ler_vira_invalida(limitador, relogio
 
     assert repositorio.invalidas == [("f1", "sem_jsonld")]
     assert repositorio.validas == []
+
+
+async def _validar(fonte, repositorio, limitador, relogio):
+    async with httpx.AsyncClient() as cliente:
+        return await validar_fonte_pendente(
+            fonte, cliente, repositorio, user_agent=UA,
+            teto_centavos=TETO, limitador=limitador, dormir=relogio.dormir,
+        )
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_403_na_validacao_mantem_pendente_e_nao_condena(limitador, relogio):
+    """Uma loja que bloqueia o IP do runner não prova que a URL é ruim."""
+    respx.get(URL_A).mock(return_value=httpx.Response(403))
+    repositorio = RepositorioFalso()
+
+    resultado = await _validar(FonteFalsa(), repositorio, limitador, relogio)
+
+    assert resultado.erro == "http_403"
+    assert repositorio.invalidas == []          # NÃO condena
+    assert repositorio.tentativas == [("f1", "http_403")]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_403_persistente_condena_na_quinta_tentativa(limitador, relogio):
+    respx.get(URL_A).mock(return_value=httpx.Response(403))
+    repositorio = RepositorioFalso()
+    fonte = FonteFalsa(falhas_seguidas=LIMITE_FALHAS_SEGUIDAS - 1)
+
+    await _validar(fonte, repositorio, limitador, relogio)
+
+    assert repositorio.invalidas == [("f1", "http_403")]
+    assert repositorio.tentativas == []
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_timeout_na_validacao_tambem_mantem_pendente(limitador, relogio):
+    respx.get(URL_A).mock(side_effect=httpx.TimeoutException("estourou"))
+    repositorio = RepositorioFalso()
+
+    await _validar(FonteFalsa(), repositorio, limitador, relogio)
+
+    assert repositorio.invalidas == []
+    assert repositorio.tentativas == [("f1", "timeout")]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_pagina_ilegivel_condena_de_imediato(limitador, relogio):
+    """Erro de parse é determinístico: insistir não muda o resultado."""
+    respx.get(URL_A).mock(
+        return_value=httpx.Response(200, text="<html><body>nada</body></html>")
+    )
+    repositorio = RepositorioFalso()
+
+    await _validar(FonteFalsa(), repositorio, limitador, relogio)
+
+    assert repositorio.invalidas == [("f1", "sem_jsonld")]
+    assert repositorio.tentativas == []
 
 
 # --- buscar_html isolado -----------------------------------------------------

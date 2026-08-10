@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from coletor.parser import ResultadoExtracao, extrair_preco
+from coletor.parser import ERROS_DE_PARSE, ResultadoExtracao, extrair_preco
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,8 @@ class RepositorioDeColeta(Protocol):
     ) -> None: ...
 
     def marcar_fonte_invalida(self, fonte: Fonte, motivo: str) -> None: ...
+
+    def registrar_tentativa_de_validacao(self, fonte: Fonte, motivo: str) -> None: ...
 
     def marcar_fonte_com_erro(self, fonte: Fonte) -> None: ...
 
@@ -329,7 +331,19 @@ async def validar_fonte_pendente(
         resultado = extrair_preco(html or "", teto_centavos=teto_centavos)
 
     if resultado.preco_centavos is None:
-        repositorio.marcar_fonte_invalida(fonte, resultado.erro or "preco_invalido")
+        motivo = resultado.erro or "preco_invalido"
+        if motivo in ERROS_DE_PARSE:
+            # A página é ilegível: insistir não muda nada.
+            repositorio.marcar_fonte_invalida(fonte, motivo)
+        else:
+            # Transporte (403, timeout, rede): a URL pode estar boa e a loja ter
+            # bloqueado o IP do runner. Mantém pendente e tenta de novo, até o
+            # limite — só então condena.
+            tentativas = fonte.falhas_seguidas + 1
+            if tentativas >= LIMITE_FALHAS_SEGUIDAS:
+                repositorio.marcar_fonte_invalida(fonte, motivo)
+            else:
+                repositorio.registrar_tentativa_de_validacao(fonte, motivo)
     else:
         repositorio.marcar_fonte_valida(
             fonte, resultado.preco_centavos, resultado.origem or "j"

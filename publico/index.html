@@ -127,6 +127,13 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .selo.alerta { color: var(--bom); border-color: var(--bom); }
 .selo.pendente { color: var(--atencao); border-color: var(--atencao); }
 .selo.invalida { color: var(--critico); border-color: var(--critico); }
+.selo.pausa { color: var(--tinta-fraca); border-color: var(--eixo); }
+
+/* Pausado continua visível e com histórico intacto — só não é coletado. */
+.produto.pausado { opacity: 0.62; }
+.produto.pausado .preco { color: var(--tinta-fraca); }
+.acoes { margin-top: 10px; display: flex; gap: 8px; }
+.acoes button { font-size: 12px; }
 
 .fontes { display: grid; gap: 6px; margin-top: 10px; }
 /* min-width:0 nos itens é o que faz o ellipsis funcionar dentro de flex:
@@ -144,6 +151,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 }
 .fonte .endereco:hover { color: var(--serie-1); text-decoration: underline; }
 .fonte .motivo { flex: none; color: var(--critico); }
+.fonte .motivo-leve { flex: none; color: var(--tinta-fraca); font-size: 12px; }
+.fonte button { flex: none; }
 
 .par-fonte {
   display: grid; grid-template-columns: 190px 1fr auto;

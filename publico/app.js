@@ -9,8 +9,8 @@ import {
   createUserWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, signOut,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import {
-  getFirestore, collection, doc, addDoc, setDoc, getDoc, onSnapshot,
-  deleteDoc, serverTimestamp,
+  getFirestore, collection, doc, addDoc, getDoc, onSnapshot,
+  deleteDoc, updateDoc, serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 import { configFirebase } from "./firebase-config.js";
@@ -434,15 +434,45 @@ function menorPrecoAtual(produto) {
   return precos.length ? Math.min(...precos) : null;
 }
 
+/** Explica o motivo em português, quando dá para explicar. */
+const EXPLICACAO_DO_ERRO = {
+  sem_jsonld: "a página não publica preço em JSON-LD",
+  sem_product: "o JSON-LD não tem um nó de produto",
+  sem_offers: "o produto não declara oferta",
+  preco_invalido: "o preço publicado não é legível",
+  moeda_nao_suportada: "o preço não está em reais",
+  http_403: "a loja recusou a requisição (bloqueio de IP)",
+  http_404: "a página não existe mais",
+  timeout: "a loja não respondeu em 15s",
+  erro_rede: "falha de rede ao acessar a loja",
+};
+
+function explicar(motivo) {
+  if (!motivo) return "não foi possível ler o preço";
+  return EXPLICACAO_DO_ERRO[motivo] || motivo;
+}
+
 function seloDaFonte(fonte) {
-  if (fonte.status === "pendente") return `<span class="selo pendente">⏳ validando fonte…</span>`;
+  if (fonte.status === "pendente") {
+    const tentando = (fonte.falhasSeguidas || 0) > 0
+      ? ` (tentativa ${fonte.falhasSeguidas + 1}: ${esc(explicar(fonte.motivoInvalida))})`
+      : "";
+    return `<span class="selo pendente">⏳ validando fonte…</span>` +
+           (tentando ? `<span class="motivo-leve">${tentando}</span>` : "");
+  }
   if (fonte.status === "invalida") {
     return `<span class="selo invalida">✕ inválida</span>
-            <span class="motivo">${esc(fonte.motivoInvalida || "não foi possível ler o preço")}</span>`;
+            <span class="motivo">${esc(explicar(fonte.motivoInvalida))}</span>`;
   }
-  if (fonte.comErro) return `<span class="selo invalida">⚠ desativada por falhas</span>`;
+  if (fonte.comErro) {
+    return `<span class="selo invalida">⚠ desativada após 5 falhas</span>
+            <span class="motivo">${esc(explicar(fonte.motivoInvalida))}</span>`;
+  }
   return `<span class="selo">✓ ok</span>`;
 }
+
+/** Uma fonte quebrada pode voltar para a fila de validação. */
+const fonteQuebrada = (fonte) => fonte.status === "invalida" || fonte.comErro === true;
 
 function renderizarLista() {
   const cores = tokens().series;
@@ -453,8 +483,9 @@ function renderizarLista() {
   for (const produto of produtos) {
     const menor = menorPrecoAtual(produto);
     const emAlerta = produto.dados.estado === "EM_ALERTA";
+    const pausado = produto.dados.ativo === false;
     const cartao = document.createElement("div");
-    cartao.className = "produto";
+    cartao.className = pausado ? "produto pausado" : "produto";
     cartao.setAttribute("aria-selected", String(produto.id === idSelecionado));
 
     const fontesHtml = produto.fontes.map((fonte, indice) => `
@@ -464,15 +495,25 @@ function renderizarLista() {
         ${seloDaFonte(fonte)}
         <a class="endereco" href="${esc(fonte.url)}" target="_blank" rel="noopener noreferrer"
            title="${esc(fonte.url)}">${esc(encurtarUrl(fonte.url))}</a>
-        ${fonte.status === "invalida"
-          ? `<button class="discreto remover-fonte" data-produto="${esc(produto.id)}" data-fonte="${esc(fonte.id)}">remover</button>`
-          : ""}
+        ${fonteQuebrada(fonte) ? `
+          <button class="discreto tentar-fonte" data-produto="${esc(produto.id)}"
+                  data-fonte="${esc(fonte.id)}" title="Volta a fonte para a fila de validação">
+            ↻ tentar de novo
+          </button>
+          <button class="discreto remover-fonte" data-produto="${esc(produto.id)}"
+                  data-fonte="${esc(fonte.id)}">remover</button>` : ""}
       </div>`).join("");
+
+    const seloEstado = pausado
+      ? `<span class="selo pausa">⏸ pausado</span>`
+      : emAlerta
+        ? `<span class="selo alerta">🔻 em alerta</span>`
+        : `<span class="selo">acima do alvo</span>`;
 
     cartao.innerHTML = `
       <div class="cabeca">
         <span class="nome" title="${esc(produto.dados.nome)}">${esc(produto.dados.nome)}</span>
-        ${emAlerta ? `<span class="selo alerta">🔻 em alerta</span>` : `<span class="selo">acima do alvo</span>`}
+        ${seloEstado}
         <span class="preco">${formatarBRL(menor)}</span>
       </div>
       <div class="meta">
@@ -480,10 +521,16 @@ function renderizarLista() {
         · tolerância ${produto.dados.toleranciaPct}%
         · dispara em ${formatarBRL(produto.dados.precoGatilhoCentavos)}
       </div>
-      <div class="fontes">${fontesHtml}</div>`;
+      <div class="fontes">${fontesHtml}</div>
+      <div class="acoes">
+        <button class="discreto alternar-ativo" data-produto="${esc(produto.id)}"
+                data-ativo="${pausado ? "false" : "true"}">
+          ${pausado ? "▶ retomar coleta" : "⏸ pausar coleta"}
+        </button>
+      </div>`;
 
     cartao.addEventListener("click", (evento) => {
-      if (evento.target.closest(".remover-fonte")) return;
+      if (evento.target.closest(".remover-fonte, .alternar-ativo, .tentar-fonte")) return;
       idSelecionado = produto.id;
       renderizarLista();
       carregarHistorico();
@@ -495,6 +542,43 @@ function renderizarLista() {
     botao.addEventListener("click", async () => {
       const { produto, fonte } = botao.dataset;
       await deleteDoc(doc(db, `usuarios/${uid}/produtos/${produto}/fontes/${fonte}`));
+    });
+  });
+
+  lista.querySelectorAll(".tentar-fonte").forEach((botao) => {
+    botao.addEventListener("click", async () => {
+      botao.disabled = true;
+      const { produto, fonte } = botao.dataset;
+      try {
+        // As rules só aceitam esta transição exata: quebrada -> pendente,
+        // zerando os contadores. Promover para 'ok' continua sendo do coletor.
+        await updateDoc(doc(db, `usuarios/${uid}/produtos/${produto}/fontes/${fonte}`), {
+          status: "pendente",
+          motivoInvalida: null,
+          falhasSeguidas: 0,
+          comErro: false,
+        });
+      } catch (erro) {
+        console.error("falha ao reenfileirar a fonte", erro);
+        botao.disabled = false;
+      }
+    });
+  });
+
+  lista.querySelectorAll(".alternar-ativo").forEach((botao) => {
+    botao.addEventListener("click", async () => {
+      botao.disabled = true;
+      try {
+        // As rules permitem alterar só ['nome', 'precoAlvoCentavos',
+        // 'toleranciaPct', 'precoGatilhoCentavos', 'ativo'] — 'ativo' está na
+        // lista, e o documento resultante continua válido.
+        await updateDoc(doc(db, `usuarios/${uid}/produtos/${botao.dataset.produto}`), {
+          ativo: botao.dataset.ativo !== "true",
+        });
+      } catch (erro) {
+        console.error("falha ao pausar/retomar", erro);
+        botao.disabled = false;
+      }
     });
   });
 }

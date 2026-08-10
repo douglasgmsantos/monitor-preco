@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from google.api_core.exceptions import PermissionDenied
+from google.api_core.exceptions import FailedPrecondition, PermissionDenied
 
 from coletor import alertas, config
 from coletor.coleta import LimitadorPorHost, coletar_fontes, validar_fonte_pendente
@@ -215,6 +215,21 @@ def principal() -> int:
 
     try:
         resumo = asyncio.run(executar_ciclo(cfg=cfg))
+    except FailedPrecondition as erro:
+        mensagem = str(erro)
+        if "currently building" in mensagem:
+            # Transitório: o índice existe e está sendo construído. A próxima
+            # execução do cron (15 min) passa. Não é motivo para job vermelho.
+            logger.warning(
+                "índice ainda em construção; nada a fazer além de esperar. "
+                "A próxima execução do cron resolve."
+            )
+            return 0
+        logger.error(
+            "consulta sem índice. Publique com "
+            "`firebase deploy --only firestore:indexes`.\nDetalhe: %s", mensagem
+        )
+        return 1
     except PermissionDenied:
         # O Admin SDK ignora as security rules, então isto NUNCA é problema de
         # firestore.rules — é IAM. A service account autenticou (o token foi

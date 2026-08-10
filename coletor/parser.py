@@ -33,6 +33,14 @@ DISPONIBILIDADE_INDISPONIVEL = frozenset(
 
 MOEDA_ACEITA = "BRL"
 
+# Erros que dizem algo sobre a PÁGINA: repetir a requisição não muda o
+# resultado. Qualquer outro motivo (http_403, timeout, erro_rede) é de
+# TRANSPORTE e pode ser transitório — quem valida fonte precisa distinguir os
+# dois, senão condena uma URL boa porque a loja bloqueou o IP do runner.
+ERROS_DE_PARSE = frozenset(
+    {"sem_jsonld", "sem_product", "sem_offers", "preco_invalido", "moeda_nao_suportada"}
+)
+
 SELETOR_JSONLD = 'script[type="application/ld+json"]'
 
 

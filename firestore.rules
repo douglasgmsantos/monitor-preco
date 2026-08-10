@@ -23,6 +23,23 @@ service cloud.firestore {
               'precoGatilhoCentavos', 'ativo'];
     }
 
+    // Única escrita em fonte permitida ao cliente: devolver uma fonte QUEBRADA
+    // para a fila de validação. Não pode alterar url, loja, preço nem promover
+    // a fonte para 'ok' — quem promove continua sendo só o coletor.
+    function ehRetentativaDeFonte() {
+      let antes = resource.data;
+      let depois = request.resource.data;
+      return (antes.status == 'invalida' || antes.comErro == true)
+          && depois.status == 'pendente'
+          && depois.motivoInvalida == null
+          && depois.falhasSeguidas == 0
+          && depois.comErro == false
+          && depois.url == antes.url
+          && depois.loja == antes.loja
+          && depois.diff(antes).affectedKeys()
+               .hasOnly(['status', 'motivoInvalida', 'falhasSeguidas', 'comErro']);
+    }
+
     match /usuarios/{uid} {
 
       match /produtos/{produtoId} {
@@ -44,7 +61,7 @@ service cloud.firestore {
                         && request.resource.data.loja is string
                         && request.resource.data.falhasSeguidas == 0
                         && request.resource.data.comErro == false;
-          allow update: if false;
+          allow update: if ehDono(uid) && ehRetentativaDeFonte();
         }
 
         match /historico/{docId} { allow read: if ehDono(uid); allow write: if false; }
