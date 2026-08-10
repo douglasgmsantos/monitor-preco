@@ -90,6 +90,14 @@ def escrever(uid: str, caminho: str, campos: dict) -> httpx.Response:
     )
 
 
+def apagar(uid: str, caminho: str) -> httpx.Response:
+    return httpx.delete(
+        f"{BASE}/{caminho}",
+        headers={"Authorization": f"Bearer {token(uid)}"},
+        timeout=15,
+    )
+
+
 def ler(uid: str, caminho: str) -> httpx.Response:
     return httpx.get(
         f"{BASE}/{caminho}",
@@ -172,6 +180,42 @@ def test_cliente_nao_escreve_no_rollup_diario(cenario):
         {"fonteId": {"stringValue": "x"}},
     )
     assert not permitido(resposta)
+
+
+def test_dono_apaga_o_proprio_historico(cenario):
+    """Necessário porque o Firestore não faz cascata: sem delete, excluir um
+    produto deixaria histórico órfão para sempre. Poder apagar não é poder
+    forjar — a criação e a alteração seguem bloqueadas."""
+    caminho = "usuarios/u1/produtos/p1/historico/f1_2026-08"
+    rep = Repositorio()
+    rep._db.document(caminho).set({"fonteId": "f1", "mes": "2026-08", "leituras": []})
+
+    assert permitido(apagar("u1", caminho))
+
+
+def test_dono_apaga_o_proprio_rollup(cenario):
+    caminho = "usuarios/u1/produtos/p1/diario/f1_2026"
+    rep = Repositorio()
+    rep._db.document(caminho).set({"fonteId": "f1", "ano": 2026, "dias": {}})
+
+    assert permitido(apagar("u1", caminho))
+
+
+def test_outro_usuario_nao_apaga_historico(cenario):
+    caminho = "usuarios/u1/produtos/p1/historico/f1_2026-08"
+    rep = Repositorio()
+    rep._db.document(caminho).set({"fonteId": "f1", "mes": "2026-08", "leituras": []})
+
+    assert not permitido(apagar("u2", caminho))
+
+
+def test_dono_apaga_fonte_e_produto(cenario):
+    assert permitido(apagar("u1", CAMINHO_FONTE))
+    assert permitido(apagar("u1", CAMINHO_PRODUTO))
+
+
+def test_outro_usuario_nao_apaga_produto(cenario):
+    assert not permitido(apagar("u2", CAMINHO_PRODUTO))
 
 
 def test_cliente_nao_escreve_no_controle(cenario):

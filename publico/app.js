@@ -9,8 +9,8 @@ import {
   createUserWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, signOut,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import {
-  getFirestore, collection, doc, addDoc, getDoc, onSnapshot,
-  deleteDoc, updateDoc, serverTimestamp,
+  getFirestore, collection, doc, addDoc, getDoc, getDocs, onSnapshot,
+  updateDoc, writeBatch, serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 import { configFirebase } from "./firebase-config.js";
@@ -25,6 +25,7 @@ const MAX_SERIES = 8; // a paleta tem 8 slots; nunca gerar uma 9ª cor
 let uid = null;
 let produtos = [];              // {id, dados, fontes:[]}
 let idSelecionado = null;
+let modoEdicao = null;          // id do produto em edição, ou null para criação
 let periodo = "1m";
 let grafico = null;
 let dadosDoGrafico = null;      // {rotulos, series:[{nome, cor, valores}]}
@@ -231,20 +232,29 @@ function hostCombinaComLoja(url, loja) {
   return definicao.dominios.some((d) => host === d || host.endsWith("." + d));
 }
 
-function adicionarParDeFonte() {
+function adicionarParDeFonte({ loja = "", url = "", fonteId = "" } = {}) {
   const linha = document.createElement("div");
   linha.className = "par-fonte";
-  const opcoes = LOJAS.map((l) => `<option value="${esc(l.nome)}">${esc(l.nome)}</option>`).join("");
+  // fonteId vazio = fonte nova; preenchido = fonte existente sendo editada
+  linha.dataset.fonteId = fonteId;
+
+  const conhecida = LOJAS.some((l) => l.nome === loja);
+  const selecionada = loja ? (conhecida ? loja : LOJA_OUTRA) : "";
+  const opcoes = LOJAS.map((l) =>
+    `<option value="${esc(l.nome)}"${l.nome === selecionada ? " selected" : ""}>${esc(l.nome)}</option>`
+  ).join("");
+
   linha.innerHTML = `
     <div class="celula-loja">
       <select class="loja-escolha">
-        <option value="" selected>Selecione a loja…</option>
+        <option value=""${selecionada ? "" : " selected"}>Selecione a loja…</option>
         ${opcoes}
-        <option value="${LOJA_OUTRA}">Outra loja…</option>
+        <option value="${LOJA_OUTRA}"${selecionada === LOJA_OUTRA ? " selected" : ""}>Outra loja…</option>
       </select>
-      <input class="loja-livre oculto" placeholder="Nome da loja">
+      <input class="loja-livre ${selecionada === LOJA_OUTRA ? "" : "oculto"}"
+             placeholder="Nome da loja" value="${selecionada === LOJA_OUTRA ? esc(loja) : ""}">
     </div>
-    <input class="url" placeholder="https://...">
+    <input class="url" placeholder="https://..." value="${esc(url)}">
     <button class="discreto remover" title="Remover">✕</button>`;
 
   const escolha = linha.querySelector(".loja-escolha");
@@ -278,18 +288,24 @@ function erroForm(mensagem) {
   return false;
 }
 
-$("btSalvar").addEventListener("click", async () => {
+/** Lê e valida o formulário. Devolve os dados, ou null se algo está errado. */
+function lerFormulario() {
   erroForm(null);
   const nome = $("nome").value.trim();
-  if (!nome || nome.length > 200) return erroForm("Informe um nome de até 200 caracteres.");
+  if (!nome || nome.length > 200) {
+    erroForm("Informe um nome de até 200 caracteres.");
+    return null;
+  }
 
   const alvoCentavos = paraCentavos($("alvo").value);
   if (alvoCentavos === null) {
-    return erroForm('Preço-alvo inválido. Use o formato 1.789,90 ou 1789.90.');
+    erroForm("Preço-alvo inválido. Use o formato 1.789,90 ou 1789.90.");
+    return null;
   }
   const tolerancia = parseInt($("tolerancia").value, 10);
   if (!Number.isInteger(tolerancia) || tolerancia < 0 || tolerancia > 100) {
-    return erroForm("Tolerância precisa ser um inteiro entre 0 e 100.");
+    erroForm("Tolerância precisa ser um inteiro entre 0 e 100.");
+    return null;
   }
 
   const fontes = [];
@@ -297,66 +313,223 @@ $("btSalvar").addEventListener("click", async () => {
     const loja = lojaDaLinha(linha);
     const url = linha.querySelector(".url").value.trim();
     if (!loja && !url) continue;
-    if (!loja) return erroForm("Escolha a loja (ou informe o nome em “Outra loja”).");
+    if (!loja) {
+      erroForm("Escolha a loja (ou informe o nome em “Outra loja”).");
+      return null;
+    }
     if (!/^https:\/\/.+/.test(url)) {
-      return erroForm(`URL inválida em “${loja}”: precisa começar com https://`);
+      erroForm(`URL inválida em “${loja}”: precisa começar com https://`);
+      return null;
     }
     const incompativel = motivoDeIncompatibilidade(url);
     if (incompativel) {
-      return erroForm(`Essa loja não pode ser monitorada: ${incompativel}.`);
+      erroForm(`Essa loja não pode ser monitorada: ${incompativel}.`);
+      return null;
     }
     if (!hostCombinaComLoja(url, loja)) {
-      return erroForm(
+      erroForm(
         `A URL não é de ${loja} (domínio: ${hostDaUrl(url)}). ` +
         `Confira a loja escolhida.`);
+      return null;
     }
-    fontes.push({ loja, url });
+    fontes.push({ loja, url, fonteId: linha.dataset.fonteId || "" });
   }
-  if (!fontes.length) return erroForm("Cadastre ao menos uma loja com URL.");
+  if (!fontes.length) {
+    erroForm("Cadastre ao menos uma loja com URL.");
+    return null;
+  }
+  return { nome, alvoCentavos, tolerancia, fontes };
+}
+
+/** Campos do produto que o cliente pode escrever. As rules exigem exatamente
+ *  estes; `precoGatilhoCentavos` vai como o mínimo válido e o coletor corrige. */
+function camposDoProduto({ nome, alvoCentavos, tolerancia }) {
+  return {
+    nome,
+    precoAlvoCentavos: alvoCentavos,
+    toleranciaPct: tolerancia,
+    // O gatilho autoritativo é calculado pelo coletor (calcular_gatilho, em
+    // alertas.py). Duplicar a fórmula aqui violaria o anti-padrão da seção 14.
+    precoGatilhoCentavos: alvoCentavos,
+  };
+}
+
+const CAMPOS_DE_FONTE_NOVA = {
+  status: "pendente",   // as rules exigem; quem promove é o coletor
+  motivoInvalida: null,
+  falhasSeguidas: 0,
+  comErro: false,
+  ultimoPrecoCentavos: null,
+  ultimaColetaEm: null,
+};
+
+async function criarProduto(dados) {
+  const refProduto = await addDoc(collection(db, `usuarios/${uid}/produtos`), {
+    ...camposDoProduto(dados),
+    estado: "ACIMA",
+    ultimoAlertaEm: null,
+    ultimoPrecoAlertadoCentavos: null,
+    ativo: true,
+    criadoEm: serverTimestamp(),
+  });
+  for (const fonte of dados.fontes) {
+    await addDoc(collection(db, `usuarios/${uid}/produtos/${refProduto.id}/fontes`), {
+      loja: fonte.loja, url: fonte.url, ...CAMPOS_DE_FONTE_NOVA,
+    });
+  }
+  return refProduto.id;
+}
+
+async function salvarEdicao(produtoId, dados) {
+  const produto = produtos.find((p) => p.id === produtoId);
+  const antes = new Map((produto ? produto.fontes : []).map((f) => [f.id, f]));
+
+  await updateDoc(doc(db, `usuarios/${uid}/produtos/${produtoId}`), camposDoProduto(dados));
+
+  const mantidas = new Set();
+  for (const fonte of dados.fontes) {
+    const base = `usuarios/${uid}/produtos/${produtoId}/fontes`;
+    if (!fonte.fonteId) {
+      await addDoc(collection(db, base), {
+        loja: fonte.loja, url: fonte.url, ...CAMPOS_DE_FONTE_NOVA,
+      });
+      continue;
+    }
+    mantidas.add(fonte.fonteId);
+    const anterior = antes.get(fonte.fonteId);
+    if (anterior && anterior.url === fonte.url && anterior.loja === fonte.loja) {
+      continue;   // nada mudou: não revalida de graça
+    }
+    // Mudou loja ou URL: volta para a fila. Quem decide se a URL presta é o
+    // coletor. O histórico da fonte é preservado — ver README.
+    await updateDoc(doc(db, `${base}/${fonte.fonteId}`), {
+      loja: fonte.loja,
+      url: fonte.url,
+      status: "pendente",
+      motivoInvalida: null,
+      falhasSeguidas: 0,
+      comErro: false,
+    });
+  }
+
+  // Fontes que o usuário tirou do formulário
+  for (const id of antes.keys()) {
+    if (!mantidas.has(id)) {
+      await apagarFonteComHistorico(produtoId, id);
+    }
+  }
+}
+
+$("btSalvar").addEventListener("click", async () => {
+  const dados = lerFormulario();
+  if (!dados) return;
 
   $("btSalvar").disabled = true;
   try {
-    const refProduto = await addDoc(collection(db, `usuarios/${uid}/produtos`), {
-      nome,
-      precoAlvoCentavos: alvoCentavos,
-      toleranciaPct: tolerancia,
-      // O gatilho autoritativo é calculado pelo coletor (calcular_gatilho, em
-      // alertas.py). As rules só exigem >= alvo, então mandamos o mínimo
-      // válido e deixamos o coletor corrigir no próximo ciclo. Duplicar a
-      // fórmula aqui violaria o anti-padrão da seção 14.
-      precoGatilhoCentavos: alvoCentavos,
-      estado: "ACIMA",
-      ultimoAlertaEm: null,
-      ultimoPrecoAlertadoCentavos: null,
-      ativo: true,
-      criadoEm: serverTimestamp(),
-    });
-
-    for (const fonte of fontes) {
-      await addDoc(collection(db, `usuarios/${uid}/produtos/${refProduto.id}/fontes`), {
-        loja: fonte.loja,
-        url: fonte.url,
-        status: "pendente",   // as rules exigem; quem promove é o coletor
-        motivoInvalida: null,
-        falhasSeguidas: 0,
-        comErro: false,
-        ultimoPrecoCentavos: null,
-        ultimaColetaEm: null,
-      });
+    if (modoEdicao) {
+      await salvarEdicao(modoEdicao, dados);
+      idSelecionado = modoEdicao;
+      cancelarEdicao();
+    } else {
+      idSelecionado = await criarProduto(dados);
+      limparFormulario();
     }
-
-    $("nome").value = "";
-    $("alvo").value = "";
-    $("tolerancia").value = "0";
-    $("pares").innerHTML = "";
-    adicionarParDeFonte();
-    idSelecionado = refProduto.id;
   } catch (erro) {
-    erroForm(`Não foi possível cadastrar: ${erro.message || erro}`);
+    erroForm(`Não foi possível salvar: ${erro.message || erro}`);
   } finally {
     $("btSalvar").disabled = false;
   }
 });
+
+function limparFormulario() {
+  $("nome").value = "";
+  $("alvo").value = "";
+  $("tolerancia").value = "0";
+  $("pares").innerHTML = "";
+  adicionarParDeFonte();
+  erroForm(null);
+}
+
+function iniciarEdicao(produtoId) {
+  const produto = produtos.find((p) => p.id === produtoId);
+  if (!produto) return;
+
+  modoEdicao = produtoId;
+  $("nome").value = produto.dados.nome || "";
+  // reais na entrada, centavos no armazenamento
+  $("alvo").value = formatarBRL(produto.dados.precoAlvoCentavos).replace("R$", "").trim();
+  $("tolerancia").value = String(produto.dados.toleranciaPct ?? 0);
+  $("pares").innerHTML = "";
+  for (const fonte of produto.fontes) {
+    adicionarParDeFonte({ loja: fonte.loja, url: fonte.url, fonteId: fonte.id });
+  }
+  if (!produto.fontes.length) adicionarParDeFonte();
+
+  $("tituloForm").textContent = "Editar produto";
+  $("btSalvar").textContent = "Salvar alterações";
+  $("btCancelarEdicao").classList.remove("oculto");
+  erroForm(null);
+  $("nome").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function cancelarEdicao() {
+  modoEdicao = null;
+  $("tituloForm").textContent = "Novo produto";
+  $("btSalvar").textContent = "Cadastrar produto";
+  $("btCancelarEdicao").classList.add("oculto");
+  limparFormulario();
+}
+
+$("btCancelarEdicao").addEventListener("click", cancelarEdicao);
+
+/** Apaga uma fonte e o histórico que pertence a ela.
+ *
+ *  O Firestore não faz cascata: sem isso, os buckets `historico/{fonteId}_*` e
+ *  `diario/{fonteId}_*` ficariam órfãos ocupando espaço para sempre.
+ */
+async function apagarFonteComHistorico(produtoId, fonteId) {
+  const base = `usuarios/${uid}/produtos/${produtoId}`;
+  const lote = writeBatch(db);
+  for (const colecao of ["historico", "diario"]) {
+    const docs = await getDocs(collection(db, `${base}/${colecao}`));
+    docs.forEach((documento) => {
+      if (documento.id.startsWith(`${fonteId}_`)) lote.delete(documento.ref);
+    });
+  }
+  lote.delete(doc(db, `${base}/fontes/${fonteId}`));
+  await lote.commit();
+}
+
+/** Exclui o produto inteiro, incluindo fontes, histórico e rollup. */
+async function excluirProduto(produtoId) {
+  const produto = produtos.find((p) => p.id === produtoId);
+  if (!produto) return;
+
+  const quantasFontes = produto.fontes.length;
+  const confirmado = confirm(
+    `Excluir “${produto.dados.nome}”?\n\n` +
+    `Isso apaga ${quantasFontes} fonte(s) e TODO o histórico de preços do ` +
+    `produto. Não há como desfazer.\n\n` +
+    `Para só parar de coletar sem perder o histórico, use “pausar coleta”.`
+  );
+  if (!confirmado) return;
+
+  const base = `usuarios/${uid}/produtos/${produtoId}`;
+  try {
+    const lote = writeBatch(db);
+    for (const colecao of ["fontes", "historico", "diario"]) {
+      const docs = await getDocs(collection(db, `${base}/${colecao}`));
+      docs.forEach((documento) => lote.delete(documento.ref));
+    }
+    lote.delete(doc(db, base));
+    await lote.commit();
+
+    if (modoEdicao === produtoId) cancelarEdicao();
+  } catch (erro) {
+    console.error("falha ao excluir o produto", erro);
+    alert(`Não foi possível excluir: ${erro.message || erro}`);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Leitura em tempo real
@@ -497,9 +670,6 @@ function renderizarLista() {
         ${seloDaFonte(fonte)}
         <a class="endereco" href="${esc(fonte.url)}" target="_blank" rel="noopener noreferrer"
            title="${esc(fonte.url)}">${esc(encurtarUrl(fonte.url))}</a>
-        <button class="discreto editar-fonte" data-produto="${esc(produto.id)}"
-                data-fonte="${esc(fonte.id)}" data-url="${esc(fonte.url)}"
-                data-loja="${esc(fonte.loja)}" title="Editar o link">✎</button>
         ${fonteQuebrada(fonte) ? `
           <button class="discreto tentar-fonte" data-produto="${esc(produto.id)}"
                   data-fonte="${esc(fonte.id)}" title="Volta a fonte para a fila de validação">
@@ -528,15 +698,16 @@ function renderizarLista() {
       </div>
       <div class="fontes">${fontesHtml}</div>
       <div class="acoes">
+        <button class="discreto editar-produto" data-produto="${esc(produto.id)}">✎ editar</button>
         <button class="discreto alternar-ativo" data-produto="${esc(produto.id)}"
                 data-ativo="${pausado ? "false" : "true"}">
           ${pausado ? "▶ retomar coleta" : "⏸ pausar coleta"}
         </button>
+        <button class="discreto perigo excluir-produto" data-produto="${esc(produto.id)}">🗑 excluir</button>
       </div>`;
 
     cartao.addEventListener("click", (evento) => {
-      if (evento.target.closest(
-        ".remover-fonte, .alternar-ativo, .tentar-fonte, .editar-fonte")) return;
+      if (evento.target.closest(".acoes, .remover-fonte, .tentar-fonte")) return;
       idSelecionado = produto.id;
       renderizarLista();
       carregarHistorico();
@@ -544,15 +715,19 @@ function renderizarLista() {
     lista.appendChild(cartao);
   }
 
+  lista.querySelectorAll(".editar-produto").forEach((botao) => {
+    botao.addEventListener("click", () => iniciarEdicao(botao.dataset.produto));
+  });
+
+  lista.querySelectorAll(".excluir-produto").forEach((botao) => {
+    botao.addEventListener("click", () => excluirProduto(botao.dataset.produto));
+  });
+
   lista.querySelectorAll(".remover-fonte").forEach((botao) => {
     botao.addEventListener("click", async () => {
       const { produto, fonte } = botao.dataset;
-      await deleteDoc(doc(db, `usuarios/${uid}/produtos/${produto}/fontes/${fonte}`));
+      await apagarFonteComHistorico(produto, fonte);
     });
-  });
-
-  lista.querySelectorAll(".editar-fonte").forEach((botao) => {
-    botao.addEventListener("click", () => editarFonte(botao.dataset));
   });
 
   lista.querySelectorAll(".tentar-fonte").forEach((botao) => {
@@ -591,57 +766,6 @@ function renderizarLista() {
       }
     });
   });
-}
-
-/**
- * Edita a URL de uma fonte já cadastrada.
- *
- * A fonte volta para `pendente`: quem decide se a nova URL presta é o coletor,
- * não o front. O histórico da fonte é PRESERVADO — na maioria dos casos a
- * edição corrige um slug ou tira parâmetros de rastreio do mesmo produto. Se a
- * URL passar a apontar para outro produto, a guarda de sanidade do coletor
- * marca a leitura discrepante como suspeita, e leitura suspeita fica fora do
- * gráfico e não dispara alerta.
- */
-async function editarFonte({ produto, fonte, url, loja }) {
-  const nova = prompt(
-    `Editar o link de ${loja}.\n\n` +
-    `A fonte volta para validação e o histórico é mantido. ` +
-    `Se a URL for de outro produto, prefira remover e cadastrar de novo.`,
-    url,
-  );
-  if (nova === null) return;
-
-  const limpa = nova.trim();
-  if (limpa === url) return;
-  if (!/^https:\/\/.+/.test(limpa)) {
-    alert("A URL precisa começar com https://");
-    return;
-  }
-  const incompativel = motivoDeIncompatibilidade(limpa);
-  if (incompativel) {
-    alert(`Essa loja não pode ser monitorada: ${incompativel}.`);
-    return;
-  }
-  if (!hostCombinaComLoja(limpa, loja)) {
-    const host = hostDaUrl(limpa);
-    if (!confirm(`A URL é de ${host}, e a fonte está cadastrada como ${loja}. Continuar?`)) {
-      return;
-    }
-  }
-
-  try {
-    await updateDoc(doc(db, `usuarios/${uid}/produtos/${produto}/fontes/${fonte}`), {
-      url: limpa,
-      status: "pendente",
-      motivoInvalida: null,
-      falhasSeguidas: 0,
-      comErro: false,
-    });
-  } catch (erro) {
-    console.error("falha ao editar a fonte", erro);
-    alert(`Não foi possível editar: ${erro.message || erro}`);
-  }
 }
 
 // ---------------------------------------------------------------------------

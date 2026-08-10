@@ -68,8 +68,18 @@ service cloud.firestore {
           allow update: if ehDono(uid) && ehReenfileiramentoDeFonte();
         }
 
-        match /historico/{docId} { allow read: if ehDono(uid); allow write: if false; }
-        match /diario/{docId}    { allow read: if ehDono(uid); allow write: if false; }
+        // Ler e APAGAR são do dono; criar e alterar são só do coletor.
+        // O delete existe porque o Firestore não faz cascata: sem ele, excluir
+        // um produto deixaria histórico órfão para sempre. Poder apagar o
+        // próprio histórico não permite forjá-lo, que é o que importa proteger.
+        match /historico/{docId} {
+          allow read, delete: if ehDono(uid);
+          allow create, update: if false;
+        }
+        match /diario/{docId} {
+          allow read, delete: if ehDono(uid);
+          allow create, update: if false;
+        }
       }
 
       match /sistema/{docId} { allow read: if ehDono(uid); allow write: if false; }

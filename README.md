@@ -87,7 +87,6 @@ Só entram lojas verificadas na página de produto real: o preço vem em
 |---|---|---|
 | KaBuM | `3499.9` (float) | `https://schema.org/OutOfStock` |
 | Terabyte Shop | `"1789.99"` (string) | `http://schema.org/InStock` |
-| Pichau | `"34117.64"` (string) | `https://schema.org/InStock` |
 | Carrefour | `9990` (int) | `http://schema.org/InStock` |
 
 ### Lojas que NÃO funcionam
@@ -97,9 +96,17 @@ Só entram lojas verificadas na página de produto real: o preço vem em
 | Amazon | não publica JSON-LD — zero blocos em 1,8 MB de HTML |
 | Mercado Livre | serve um shell de ~39 KB e monta tudo por JavaScript |
 | Magazine Luiza | HTTP 403 mesmo com User-Agent de navegador |
+| Pichau | responde de IP residencial, **recusa o datacenter** onde o coletor roda (HTTP 403) |
 
-O front recusa essas três de saída. Outras lojas podem ser cadastradas em
+O front recusa essas quatro de saída. Outras lojas podem ser cadastradas em
 "Outra loja", mas só a primeira coleta dirá se a página é legível.
+
+> **Aviso sobre a lista acima.** A verificação inicial foi feita de um IP
+> residencial brasileiro. O coletor roda de um IP de datacenter (Azure, via
+> GitHub Actions), e lojas com anti-bot tratam os dois de forma diferente — foi
+> exatamente assim que a Pichau, aprovada em laboratório, falhou na primeira
+> execução real. **Só a produção decide quais lojas funcionam.** KaBuM, Terabyte
+> e Carrefour seguem sem confirmação em produção.
 
 ---
 
@@ -141,6 +148,73 @@ field path do Firestore com caractere especial exige escaping por crase, e isso
 é fonte silenciosa de bug em update aninhado.
 
 ---
+
+## Alertas
+
+Há **dois gatilhos independentes**, e o efetivo é o maior dos dois — porque
+`preço ≤ alvo OU preço ≤ limite_da_média` é `preço ≤ max(alvo, limite)`. Isso
+também deixa a regra de rearme correta sem código extra.
+
+| Gatilho | Condição | Quando existe |
+|---|---|---|
+| Preço-alvo | `preço ≤ alvo × (1 + tolerância%)` | sempre |
+| Média histórica | `preço ≤ média × (1 − MARGEM_MEDIA_PCT%)` | a partir de 30 dias de histórico |
+
+A margem no gatilho da média não é decoração: **"abaixo da média" sem margem
+dispararia em cerca de metade das leituras**, porque preço oscila em torno da
+própria média por definição. Default 10%.
+
+A média histórica cobre todo o histórico, ponderada por amostra (`soma`/`n`
+acumulados), nunca média de médias. É diferente da média de 30 dias, que aparece
+na mensagem como referência de variação.
+
+### O que limita a quantidade de mensagens
+
+| Situação | Ação |
+|---|---|
+| Preço cruza o gatilho pela primeira vez | notifica, vai para `EM_ALERTA` |
+| Continua abaixo, sem cair mais 5% | silêncio |
+| Cai mais 5% abaixo do último preço avisado | renotifica |
+| Volta acima do gatilho | silêncio e rearma para `ACIMA` |
+| Indisponível ou leitura suspeita | silêncio, estado inalterado |
+
+Mais cooldown de no máximo 1 mensagem por produto a cada 24h. Numa simulação de
+84h com o preço abaixo do alvo a maior parte do tempo: **4 mensagens em 14
+ciclos**.
+
+A mensagem muda de título conforme o gatilho. Dizer "Preço atingido" quando só a
+média justificou o alerta seria falso, então nesse caso o título é
+"📉 Abaixo da média histórica" e a referência exibida é a média, não o alvo.
+
+## O que o front faz
+
+- **Login** com e-mail/senha e Google
+- **Cadastrar** produto com N pares loja/URL, loja vinda de dropdown verificado
+- **Editar** todo o formulário: nome, alvo, tolerância, e as lojas/URLs
+- **Pausar / retomar** coleta sem perder histórico
+- **Excluir** produto, com cascata manual (ver abaixo)
+- **Tentar de novo** numa fonte que falhou
+- **Gráfico** com 1d / 1s / 1m / 1a, mais tabela equivalente
+
+### Cascata é manual, e tem que ser
+
+O Firestore **não apaga subcoleções** ao apagar o documento pai. Excluir um
+produto sem limpar `fontes`, `historico` e `diario` deixaria esses documentos
+órfãos, ocupando espaço para sempre. O front apaga tudo num `writeBatch`.
+
+Isso exigiu permitir `delete` (não `create`/`update`) em `historico` e `diario`
+nas rules. Poder apagar o próprio histórico não é poder forjá-lo, que é o que
+importa proteger.
+
+### Editar a URL preserva o histórico
+
+Quando você troca a URL de uma fonte, ela volta para `pendente` e o histórico
+**é mantido**. A razão: quase toda edição corrige um slug ou remove
+`?utm_...` do mesmo produto, e descartar meses de série por isso seria pior.
+
+O risco é real e a rede de proteção é a guarda de sanidade: se a nova URL for de
+outro produto, a leitura discrepante entra como `suspeito`, fica fora do gráfico
+e não dispara alerta. Para trocar de produto, prefira remover e cadastrar de novo.
 
 ## Setup
 
@@ -274,6 +348,16 @@ partir do horário agendado.
 | 13 | Sem teto no preço-alvo digitado pelo usuário | aplicar `TETO_CENTAVOS` também ali |
 | 14 | `coleta.py` recebe o repositório por injeção (`Protocol`) | importar `repositorio` direto |
 | 15 | `.gitignore` criado (fora da lista de arquivos da spec) | confiar em não rodar `git add .` |
+| 16 | Erro de **transporte** (403, timeout, rede) mantém a fonte pendente e retenta até 5×; só erro de **parse** condena de imediato | condenar a fonte em qualquer falha |
+| 17 | Gatilho da média exige margem (`MARGEM_MEDIA_PCT`, default 10) | alertar em qualquer preço abaixo da média |
+| 18 | Gatilho da média exige 30 dias distintos de histórico | usar a média disponível desde o primeiro dia |
+| 19 | Editar a URL de uma fonte **preserva** o histórico | descartar a série a cada edição |
+| 20 | Rules liberam `delete` em `historico`/`diario` para o dono | deixar histórico órfão ao excluir produto |
+| 21 | Rules permitem reenfileirar fonte **saudável**, não só quebrada | impedir a edição de um link que funciona |
+| 22 | `tests/test_rules.py` criado (fora da lista da §3) | deixar o item "rules testadas" da §17 sem teste |
+| 23 | Erro de inicialização do Admin SDK sai com código 1 | sair 0 sempre, como diz a §11.2 |
+| 24 | Índice em construção sai com código 0 (transitório) | job vermelho a cada deploy de índice |
+| 25 | Nova variável `MARGEM_MEDIA_PCT`, fora da lista da §15 | fixar a margem em código |
 
 ### Decisão B revista após implementar
 
@@ -315,6 +399,21 @@ de 3 campos foi removido.
    formatar `R$` na mensagem do Telegram. Resolvido com `divmod`, sem float.
 
 ---
+
+## Lição aprendida em produção
+
+**O emulador não valida índice nem IAM.** Os 28 testes verdes da fase 2 não
+provaram que as consultas funcionam no Firestore de verdade — as duas primeiras
+execuções reais falharam por coisas que o emulador aceita sem reclamar:
+
+| Erro em produção | Causa | O emulador |
+|---|---|---|
+| `PERMISSION_DENIED` | service account sem papel no Firestore | não tem IAM |
+| `FAILED_PRECONDITION` | índice de collection group errado | responde qualquer consulta sem índice |
+
+E **a verificação de rede feita em laboratório não vale para produção**: a
+Pichau, aprovada de IP residencial, recusou o datacenter do runner na primeira
+execução. Ver o aviso na seção de lojas.
 
 ## O que falta
 

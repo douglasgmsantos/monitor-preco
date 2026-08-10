@@ -132,8 +132,11 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 /* Pausado continua visível e com histórico intacto — só não é coletado. */
 .produto.pausado { opacity: 0.62; }
 .produto.pausado .preco { color: var(--tinta-fraca); }
-.acoes { margin-top: 10px; display: flex; gap: 8px; }
+.acoes { margin-top: 10px; display: flex; gap: 4px; flex-wrap: wrap; }
 .acoes button { font-size: 12px; }
+.acoes button.perigo { color: var(--critico); }
+.acoes button.perigo:hover { background: var(--plano); color: var(--critico); }
+.acoes-form { margin-top: 14px; display: flex; gap: 8px; align-items: center; }
 
 .fontes { display: grid; gap: 6px; margin-top: 10px; }
 /* min-width:0 nos itens é o que faz o ellipsis funcionar dentro de flex:
@@ -202,7 +205,7 @@ label { display: block; font-size: 13px; color: var(--tinta-2); margin-bottom: 4
 
   <!-- Cadastro -->
   <section class="cartao">
-    <h2>Novo produto</h2>
+    <h2 id="tituloForm">Novo produto</h2>
     <div class="campos">
       <div>
         <label for="nome">Nome</label>
@@ -226,8 +229,9 @@ label { display: block; font-size: 13px; color: var(--tinta-2); margin-bottom: 4
       recusadas de saída, por motivo já confirmado.
     </p>
     <button id="btMaisFonte" class="discreto">+ adicionar loja</button>
-    <div style="margin-top:14px">
+    <div class="acoes-form">
       <button id="btSalvar" class="primario">Cadastrar produto</button>
+      <button id="btCancelarEdicao" class="discreto oculto">cancelar</button>
     </div>
     <p id="erroForm" class="erro oculto"></p>
   </section>
