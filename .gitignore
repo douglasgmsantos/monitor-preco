@@ -6,6 +6,9 @@
 chave-privada*.json
 *serviceaccount*.json
 *service-account*.json
+# nome que o Firebase Console realmente gera ao baixar a chave
+*firebase-adminsdk*.json
+*-adminsdk-*.json
 
 # Ambiente
 .venv/
