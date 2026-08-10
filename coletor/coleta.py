@@ -231,10 +231,10 @@ async def coletar_fonte(
 
     if resultado.preco_centavos is None:
         _tratar_falha(fonte, repositorio, resultado, notificador)
-    else:
-        repositorio.marcar_fonte_valida(
-            fonte, resultado.preco_centavos, resultado.origem or "j"
-        )
+    # No sucesso não há escrita extra: `registrar_leitura` já gravou
+    # ultimoPrecoCentavos, ultimaColetaEm e zerou falhasSeguidas na mesma
+    # transação. Chamar `marcar_fonte_valida` aqui seria uma quarta escrita,
+    # contra as três que a seção 8.1 orça por coleta.
 
     return ResultadoColeta(fonte.id, resultado, suspeito, fonte)
 

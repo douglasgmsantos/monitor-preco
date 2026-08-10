@@ -120,7 +120,8 @@ async def test_sucesso_grava_uma_leitura(limitador, relogio):
     assert coleta.resultado.preco_centavos == 178999
     assert coleta.suspeito is False
     assert len(repositorio.leituras) == 1
-    assert repositorio.validas == [("f1", 178999, "j")]
+    # o sucesso não gera escrita extra na fonte: registrar_leitura já cobriu
+    assert repositorio.validas == []
     assert repositorio.com_erro == []
 
 

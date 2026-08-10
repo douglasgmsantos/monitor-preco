@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monitor de Preços</title>
+<style>
+/* --------------------------------------------------------------------------
+   Tokens. Claro é o padrão; escuro é escolhido, não um inverso automático.
+   Paleta categórica validada com o validador da skill de dataviz: todos os
+   gates passam em ambos os modos. No claro, aqua/amarelo/magenta ficam abaixo
+   de 3:1 contra a superfície — por isso a página traz rótulo de ponta e uma
+   tabela equivalente (regra de alívio).
+   -------------------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+  --plano:          #f9f9f7;
+  --superficie:     #fcfcfb;
+  --tinta:          #0b0b0b;
+  --tinta-2:        #52514e;
+  --tinta-fraca:    #898781;
+  --grade:          #e1e0d9;
+  --eixo:           #c3c2b7;
+  --borda:          rgba(11,11,11,0.10);
+  --bom:            #0ca30c;
+  --atencao:        #fab219;
+  --critico:        #d03b3b;
+  --serie-1: #2a78d6; --serie-2: #eb6834; --serie-3: #1baf7a; --serie-4: #eda100;
+  --serie-5: #e87ba4; --serie-6: #008300; --serie-7: #4a3aa7; --serie-8: #e34948;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --plano: #0d0d0d; --superficie: #1a1a19;
+    --tinta: #ffffff; --tinta-2: #c3c2b7; --tinta-fraca: #898781;
+    --grade: #2c2c2a; --eixo: #383835; --borda: rgba(255,255,255,0.10);
+    --serie-1: #3987e5; --serie-2: #d95926; --serie-3: #199e70; --serie-4: #c98500;
+    --serie-5: #d55181; --serie-6: #008300; --serie-7: #9085e9; --serie-8: #e66767;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --plano: #0d0d0d; --superficie: #1a1a19;
+  --tinta: #ffffff; --tinta-2: #c3c2b7; --tinta-fraca: #898781;
+  --grade: #2c2c2a; --eixo: #383835; --borda: rgba(255,255,255,0.10);
+  --serie-1: #3987e5; --serie-2: #d95926; --serie-3: #199e70; --serie-4: #c98500;
+  --serie-5: #d55181; --serie-6: #008300; --serie-7: #9085e9; --serie-8: #e66767;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--plano);
+  color: var(--tinta);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.envelope { max-width: 1040px; margin: 0 auto; padding: 24px 20px 64px; }
+h1 { font-size: 20px; margin: 0; font-weight: 620; }
+h2 { font-size: 15px; margin: 0 0 12px; font-weight: 600; }
+p.dica { color: var(--tinta-2); margin: 4px 0 0; font-size: 13px; }
+
+.topo { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
+.topo .espaco { flex: 1; }
+
+.cartao {
+  background: var(--superficie);
+  border: 1px solid var(--borda);
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+button, input, select {
+  font: inherit; color: var(--tinta);
+  background: var(--superficie);
+  border: 1px solid var(--eixo);
+  border-radius: 7px; padding: 8px 11px;
+}
+button { cursor: pointer; }
+button:hover { background: var(--plano); }
+button.primario {
+  background: var(--serie-1); border-color: var(--serie-1); color: #fff; font-weight: 560;
+}
+button.primario:hover { filter: brightness(0.93); }
+button.discreto { border: none; background: none; color: var(--tinta-2); padding: 4px 8px; }
+button.discreto:hover { color: var(--tinta); background: var(--plano); }
+
+/* Uma única fila de filtros, acima de tudo que ela escopa. */
+.filtros { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+.periodos { display: inline-flex; border: 1px solid var(--eixo); border-radius: 7px; overflow: hidden; }
+.periodos button { border: none; border-radius: 0; padding: 7px 15px; background: var(--superficie); }
+.periodos button + button { border-left: 1px solid var(--eixo); }
+.periodos button[aria-pressed="true"] { background: var(--serie-1); color: #fff; font-weight: 560; }
+
+/* O contêiner cresce com o conteúdo: a faixa do eixo x nunca é cortada. */
+.moldura-grafico { position: relative; height: 300px; }
+@media (max-width: 620px) { .moldura-grafico { height: 240px; } }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--grade); }
+th { color: var(--tinta-2); font-weight: 560; font-size: 13px; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.rolagem { overflow-x: auto; }
+
+.lista-produtos { display: grid; gap: 12px; }
+.produto {
+  border: 1px solid var(--borda); border-radius: 9px; padding: 14px 16px;
+  background: var(--superficie); cursor: pointer;
+  min-width: 0; overflow: hidden;   /* rede de segurança contra transbordo */
+}
+.produto .nome {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+}
+.produto[aria-selected="true"] { border-color: var(--serie-1); box-shadow: 0 0 0 1px var(--serie-1); }
+.produto .cabeca { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.produto .nome { font-weight: 580; }
+.produto .preco { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 17px; }
+.produto .meta { color: var(--tinta-2); font-size: 13px; margin-top: 4px; }
+
+/* Estado sempre com ícone + rótulo: nunca só a cor. */
+.selo {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--borda); color: var(--tinta-2);
+  white-space: nowrap; flex: none;
+}
+.selo.alerta { color: var(--bom); border-color: var(--bom); }
+.selo.pendente { color: var(--atencao); border-color: var(--atencao); }
+.selo.invalida { color: var(--critico); border-color: var(--critico); }
+
+.fontes { display: grid; gap: 6px; margin-top: 10px; }
+/* min-width:0 nos itens é o que faz o ellipsis funcionar dentro de flex:
+   sem isso o item não encolhe abaixo do conteúdo e estoura o cartão. */
+.fonte {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--tinta-2); min-width: 0;
+}
+.fonte .amostra { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.fonte .loja-nome { flex: none; font-weight: 520; color: var(--tinta); }
+.fonte .endereco {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--tinta-fraca); text-decoration: none;
+}
+.fonte .endereco:hover { color: var(--serie-1); text-decoration: underline; }
+.fonte .motivo { flex: none; color: var(--critico); }
+
+.par-fonte {
+  display: grid; grid-template-columns: 190px 1fr auto;
+  gap: 8px; margin-bottom: 8px; align-items: start;
+}
+.par-fonte .celula-loja { display: grid; gap: 6px; min-width: 0; }
+.par-fonte select, .par-fonte input { width: 100%; }
+@media (max-width: 620px) { .par-fonte { grid-template-columns: 1fr; } }
+.aviso-loja { font-size: 12px; color: var(--tinta-2); margin: 2px 0 10px; }
+label { display: block; font-size: 13px; color: var(--tinta-2); margin-bottom: 4px; }
+.campos { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+@media (max-width: 620px) { .campos { grid-template-columns: 1fr; } }
+.erro { color: var(--critico); font-size: 13px; margin-top: 8px; }
+.oculto { display: none !important; }
+.vazio { color: var(--tinta-2); font-size: 14px; }
+
+#entrar { max-width: 380px; margin: 80px auto; }
+#entrar .cartao { display: grid; gap: 12px; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- Login -->
+<section id="entrar" class="envelope oculto">
+  <div class="cartao">
+    <h1>Monitor de Preços</h1>
+    <p class="dica">Entre para cadastrar os produtos que você quer acompanhar.</p>
+    <input id="email" type="email" placeholder="e-mail" autocomplete="email">
+    <input id="senha" type="password" placeholder="senha" autocomplete="current-password">
+    <button id="btEntrar" class="primario">Entrar</button>
+    <button id="btCriar" class="discreto">Criar conta com este e-mail</button>
+    <button id="btGoogle">Entrar com Google</button>
+    <p id="erroLogin" class="erro oculto"></p>
+  </div>
+</section>
+
+<!-- Aplicação -->
+<main id="app" class="envelope oculto">
+  <div class="topo">
+    <h1>Monitor de Preços</h1>
+    <div class="espaco"></div>
+    <span id="quem" class="dica"></span>
+    <button id="btTema" class="discreto" title="Alternar tema">◐</button>
+    <button id="btSair" class="discreto">Sair</button>
+  </div>
+
+  <!-- Cadastro -->
+  <section class="cartao">
+    <h2>Novo produto</h2>
+    <div class="campos">
+      <div>
+        <label for="nome">Nome</label>
+        <input id="nome" placeholder="Placa de vídeo RX 7600">
+      </div>
+      <div>
+        <label for="alvo">Preço-alvo (R$)</label>
+        <input id="alvo" inputmode="decimal" placeholder="1.789,90">
+      </div>
+      <div>
+        <label for="tolerancia">Tolerância (%)</label>
+        <input id="tolerancia" type="number" min="0" max="100" step="1" value="0">
+      </div>
+    </div>
+    <label>Lojas e URLs</label>
+    <div id="pares"></div>
+    <p class="aviso-loja">
+      As lojas da lista foram verificadas: publicam o preço em JSON-LD e aceitam o
+      coletor. Em <strong>Outra loja</strong> o cadastro é aceito, mas só a primeira
+      coleta dirá se a página é legível — Amazon, Mercado Livre e Magazine Luiza são
+      recusadas de saída, por motivo já confirmado.
+    </p>
+    <button id="btMaisFonte" class="discreto">+ adicionar loja</button>
+    <div style="margin-top:14px">
+      <button id="btSalvar" class="primario">Cadastrar produto</button>
+    </div>
+    <p id="erroForm" class="erro oculto"></p>
+  </section>
+
+  <!-- Lista -->
+  <section class="cartao">
+    <h2>Produtos acompanhados</h2>
+    <div id="lista" class="lista-produtos"></div>
+    <p id="semProdutos" class="vazio oculto">Nenhum produto ainda. Cadastre o primeiro acima.</p>
+  </section>
+
+  <!-- Histórico -->
+  <section class="cartao">
+    <h2 id="tituloGrafico">Histórico</h2>
+    <div class="filtros">
+      <div class="periodos" role="group" aria-label="Período">
+        <button data-periodo="1d" aria-pressed="false">1d</button>
+        <button data-periodo="1s" aria-pressed="false">1s</button>
+        <button data-periodo="1m" aria-pressed="true">1m</button>
+        <button data-periodo="1a" aria-pressed="false">1a</button>
+      </div>
+      <div class="espaco" style="flex:1"></div>
+      <button id="btTabela" class="discreto" aria-pressed="false">Ver como tabela</button>
+    </div>
+    <div id="molduraGrafico" class="moldura-grafico">
+      <canvas id="grafico"></canvas>
+    </div>
+    <div id="areaTabela" class="rolagem oculto"></div>
+    <p id="semDados" class="vazio oculto">Sem leituras neste período.</p>
+  </section>
+</main>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>

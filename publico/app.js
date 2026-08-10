@@ -1,0 +1,791 @@
+// Front do monitor de preços. HTML + JS puro, sem build.
+//
+// Dinheiro trafega como INTEIRO DE CENTAVOS em todo o caminho. A única divisão
+// por 100 do projeto está em `formatarBRL`, e existe só para exibir.
+
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import {
+  getAuth, onAuthStateChanged, signInWithEmailAndPassword,
+  createUserWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, signOut,
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import {
+  getFirestore, collection, doc, addDoc, setDoc, getDoc, onSnapshot,
+  deleteDoc, serverTimestamp,
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+
+import { configFirebase } from "./firebase-config.js";
+
+const app = initializeApp(configFirebase);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+const $ = (id) => document.getElementById(id);
+const MAX_SERIES = 8; // a paleta tem 8 slots; nunca gerar uma 9ª cor
+
+let uid = null;
+let produtos = [];              // {id, dados, fontes:[]}
+let idSelecionado = null;
+let periodo = "1m";
+let grafico = null;
+let dadosDoGrafico = null;      // {rotulos, series:[{nome, cor, valores}]}
+let cancelarProdutos = null;
+const cancelarFontes = new Map();
+
+// ---------------------------------------------------------------------------
+// Dinheiro
+// ---------------------------------------------------------------------------
+
+/** A ÚNICA divisão por 100 do projeto. Existe só para exibição. */
+function formatarBRL(centavos) {
+  if (centavos === null || centavos === undefined) return "—";
+  return (centavos / 100).toLocaleString("pt-BR", {
+    style: "currency", currency: "BRL",
+  });
+}
+
+/**
+ * Texto em reais -> inteiro de centavos, ou null se inválido.
+ *
+ * Espelha os passos 2 a 6 da seção 7.5 da spec. A fonte da verdade é
+ * `normalizar_para_centavos` em coletor/parser.py; esta cópia existe porque a
+ * seção 12 exige converter na entrada, antes de gravar no Firestore.
+ */
+function paraCentavos(texto) {
+  if (typeof texto !== "string") return null;
+  const cru = texto.trim();
+  // sinal negativo tem de ser visto antes da limpeza apagá-lo
+  for (const ch of cru) {
+    if (ch >= "0" && ch <= "9") break;
+    if (ch === "-" || ch === "−") return null;
+  }
+  let limpo = cru.replace(/[^\d.,]/g, "");
+  const temVirgula = limpo.includes(",");
+  const temPonto = limpo.includes(".");
+
+  if (temVirgula && temPonto) {
+    if (limpo.lastIndexOf(",") > limpo.lastIndexOf(".")) {
+      limpo = limpo.replace(/\./g, "").replace(",", ".");
+    } else {
+      limpo = limpo.replace(/,/g, "");
+    }
+  } else if (temVirgula || temPonto) {
+    const sep = temVirgula ? "," : ".";
+    const quantas = limpo.split(sep).length - 1;
+    if (quantas > 1) {
+      limpo = limpo.split(sep).join("");
+    } else {
+      const depois = limpo.length - limpo.indexOf(sep) - 1;
+      if (depois === 1 || depois === 2) limpo = limpo.replace(sep, ".");
+      else if (depois === 3) limpo = limpo.replace(sep, "");
+      else return null;
+    }
+  }
+  if (!limpo) return null;
+
+  const ponto = limpo.indexOf(".");
+  let inteira = ponto === -1 ? limpo : limpo.slice(0, ponto);
+  let fracao = ponto === -1 ? "" : limpo.slice(ponto + 1);
+  inteira = inteira || "0";
+  fracao = (fracao + "00").slice(0, 2);
+  if (!/^\d+$/.test(inteira) || !/^\d{2}$/.test(fracao)) return null;
+
+  const centavos = parseInt(inteira, 10) * 100 + parseInt(fracao, 10);
+  if (!Number.isSafeInteger(centavos) || centavos <= 0) return null;
+  return centavos;
+}
+
+// ---------------------------------------------------------------------------
+// Tema e cores
+// ---------------------------------------------------------------------------
+
+function tokens() {
+  const estilo = getComputedStyle(document.documentElement);
+  const ler = (nome) => estilo.getPropertyValue(nome).trim();
+  return {
+    tinta: ler("--tinta"),
+    tinta2: ler("--tinta-2"),
+    fraca: ler("--tinta-fraca"),
+    grade: ler("--grade"),
+    eixo: ler("--eixo"),
+    superficie: ler("--superficie"),
+    series: Array.from({ length: MAX_SERIES }, (_, i) => ler(`--serie-${i + 1}`)),
+  };
+}
+
+$("btTema").addEventListener("click", () => {
+  const atual = document.documentElement.getAttribute("data-theme");
+  const escuroAgora =
+    atual === "dark" ||
+    (!atual && matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.setAttribute("data-theme", escuroAgora ? "light" : "dark");
+  desenhar();          // o escuro tem passos próprios, não é inversão
+  renderizarLista();
+});
+
+// ---------------------------------------------------------------------------
+// Autenticação
+// ---------------------------------------------------------------------------
+
+function mostrarErroLogin(mensagem) {
+  const alvo = $("erroLogin");
+  alvo.textContent = mensagem;
+  alvo.classList.remove("oculto");
+}
+
+$("btEntrar").addEventListener("click", async () => {
+  try {
+    await signInWithEmailAndPassword(auth, $("email").value.trim(), $("senha").value);
+  } catch (erro) { mostrarErroLogin(traduzir(erro)); }
+});
+
+$("btCriar").addEventListener("click", async () => {
+  try {
+    await createUserWithEmailAndPassword(auth, $("email").value.trim(), $("senha").value);
+  } catch (erro) { mostrarErroLogin(traduzir(erro)); }
+});
+
+$("btGoogle").addEventListener("click", async () => {
+  try {
+    await signInWithPopup(auth, new GoogleAuthProvider());
+  } catch (erro) { mostrarErroLogin(traduzir(erro)); }
+});
+
+$("btSair").addEventListener("click", () => signOut(auth));
+
+function traduzir(erro) {
+  const codigo = (erro && erro.code) || "";
+  const mapa = {
+    "auth/invalid-credential": "E-mail ou senha incorretos.",
+    "auth/invalid-email": "E-mail inválido.",
+    "auth/weak-password": "A senha precisa de ao menos 6 caracteres.",
+    "auth/email-already-in-use": "Esse e-mail já tem conta. Use Entrar.",
+    "auth/popup-closed-by-user": "Janela do Google fechada antes de concluir.",
+    "auth/operation-not-allowed": "Provedor não habilitado no Firebase Console.",
+  };
+  return mapa[codigo] || `Falha ao autenticar (${codigo || erro})`;
+}
+
+onAuthStateChanged(auth, (usuario) => {
+  uid = usuario ? usuario.uid : null;
+  $("entrar").classList.toggle("oculto", !!usuario);
+  $("app").classList.toggle("oculto", !usuario);
+  if (usuario) {
+    $("quem").textContent = usuario.email || usuario.displayName || "";
+    observarProdutos();
+  } else {
+    if (cancelarProdutos) cancelarProdutos();
+    cancelarFontes.forEach((fn) => fn());
+    cancelarFontes.clear();
+    produtos = [];
+    idSelecionado = null;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Formulário de cadastro
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Lojas
+//
+// Só entram aqui lojas em que EU verifiquei, na página de produto real, que o
+// preço vem em <script type="application/ld+json"> por HTTP simples e que o
+// User-Agent honesto do coletor não é bloqueado. Ampliar a lista exige repetir
+// essa verificação — não é palpite.
+// ---------------------------------------------------------------------------
+
+const LOJAS = [
+  { nome: "KaBuM",         dominios: ["kabum.com.br"] },
+  { nome: "Terabyte Shop", dominios: ["terabyteshop.com.br"] },
+  { nome: "Pichau",        dominios: ["pichau.com.br"] },
+  { nome: "Carrefour",     dominios: ["carrefour.com.br"] },
+];
+const LOJA_OUTRA = "__outra__";
+
+/** Domínios que eu confirmei serem incompatíveis com esta arquitetura. */
+const DOMINIOS_INCOMPATIVEIS = [
+  { padrao: /(^|\.)amazon\.com\.br$/, motivo: "a Amazon não publica JSON-LD nas páginas de produto" },
+  { padrao: /(^|\.)mercadolivre\.com\.br$/, motivo: "o Mercado Livre monta a página por JavaScript; o HTML não traz JSON-LD" },
+  { padrao: /(^|\.)magazineluiza\.com\.br$/, motivo: "o Magazine Luiza bloqueia requisições automatizadas (HTTP 403)" },
+  { padrao: /(^|\.)magalu\.com\.br$/, motivo: "o Magalu bloqueia requisições automatizadas (HTTP 403)" },
+];
+
+function hostDaUrl(url) {
+  try { return new URL(url).hostname.toLowerCase().replace(/^www\./, ""); }
+  catch { return null; }
+}
+
+function motivoDeIncompatibilidade(url) {
+  const host = hostDaUrl(url);
+  if (!host) return null;
+  const achado = DOMINIOS_INCOMPATIVEIS.find((d) => d.padrao.test(host));
+  return achado ? achado.motivo : null;
+}
+
+function hostCombinaComLoja(url, loja) {
+  const host = hostDaUrl(url);
+  const definicao = LOJAS.find((l) => l.nome === loja);
+  if (!host || !definicao) return true;   // "Outra loja": nada a comparar
+  return definicao.dominios.some((d) => host === d || host.endsWith("." + d));
+}
+
+function adicionarParDeFonte() {
+  const linha = document.createElement("div");
+  linha.className = "par-fonte";
+  const opcoes = LOJAS.map((l) => `<option value="${esc(l.nome)}">${esc(l.nome)}</option>`).join("");
+  linha.innerHTML = `
+    <div class="celula-loja">
+      <select class="loja-escolha">
+        <option value="" selected>Selecione a loja…</option>
+        ${opcoes}
+        <option value="${LOJA_OUTRA}">Outra loja…</option>
+      </select>
+      <input class="loja-livre oculto" placeholder="Nome da loja">
+    </div>
+    <input class="url" placeholder="https://...">
+    <button class="discreto remover" title="Remover">✕</button>`;
+
+  const escolha = linha.querySelector(".loja-escolha");
+  const livre = linha.querySelector(".loja-livre");
+  escolha.addEventListener("change", () => {
+    livre.classList.toggle("oculto", escolha.value !== LOJA_OUTRA);
+    if (escolha.value === LOJA_OUTRA) livre.focus();
+  });
+
+  linha.querySelector(".remover").addEventListener("click", () => {
+    if ($("pares").children.length > 1) linha.remove();
+  });
+  $("pares").appendChild(linha);
+}
+
+/** Loja informada nesta linha, ou "" se incompleta. */
+function lojaDaLinha(linha) {
+  const escolha = linha.querySelector(".loja-escolha").value;
+  if (escolha === LOJA_OUTRA) return linha.querySelector(".loja-livre").value.trim();
+  return escolha;
+}
+
+adicionarParDeFonte();
+$("btMaisFonte").addEventListener("click", () => adicionarParDeFonte());
+
+function erroForm(mensagem) {
+  const alvo = $("erroForm");
+  if (!mensagem) { alvo.classList.add("oculto"); return false; }
+  alvo.textContent = mensagem;
+  alvo.classList.remove("oculto");
+  return false;
+}
+
+$("btSalvar").addEventListener("click", async () => {
+  erroForm(null);
+  const nome = $("nome").value.trim();
+  if (!nome || nome.length > 200) return erroForm("Informe um nome de até 200 caracteres.");
+
+  const alvoCentavos = paraCentavos($("alvo").value);
+  if (alvoCentavos === null) {
+    return erroForm('Preço-alvo inválido. Use o formato 1.789,90 ou 1789.90.');
+  }
+  const tolerancia = parseInt($("tolerancia").value, 10);
+  if (!Number.isInteger(tolerancia) || tolerancia < 0 || tolerancia > 100) {
+    return erroForm("Tolerância precisa ser um inteiro entre 0 e 100.");
+  }
+
+  const fontes = [];
+  for (const linha of $("pares").children) {
+    const loja = lojaDaLinha(linha);
+    const url = linha.querySelector(".url").value.trim();
+    if (!loja && !url) continue;
+    if (!loja) return erroForm("Escolha a loja (ou informe o nome em “Outra loja”).");
+    if (!/^https:\/\/.+/.test(url)) {
+      return erroForm(`URL inválida em “${loja}”: precisa começar com https://`);
+    }
+    const incompativel = motivoDeIncompatibilidade(url);
+    if (incompativel) {
+      return erroForm(`Essa loja não pode ser monitorada: ${incompativel}.`);
+    }
+    if (!hostCombinaComLoja(url, loja)) {
+      return erroForm(
+        `A URL não é de ${loja} (domínio: ${hostDaUrl(url)}). ` +
+        `Confira a loja escolhida.`);
+    }
+    fontes.push({ loja, url });
+  }
+  if (!fontes.length) return erroForm("Cadastre ao menos uma loja com URL.");
+
+  $("btSalvar").disabled = true;
+  try {
+    const refProduto = await addDoc(collection(db, `usuarios/${uid}/produtos`), {
+      nome,
+      precoAlvoCentavos: alvoCentavos,
+      toleranciaPct: tolerancia,
+      // O gatilho autoritativo é calculado pelo coletor (calcular_gatilho, em
+      // alertas.py). As rules só exigem >= alvo, então mandamos o mínimo
+      // válido e deixamos o coletor corrigir no próximo ciclo. Duplicar a
+      // fórmula aqui violaria o anti-padrão da seção 14.
+      precoGatilhoCentavos: alvoCentavos,
+      estado: "ACIMA",
+      ultimoAlertaEm: null,
+      ultimoPrecoAlertadoCentavos: null,
+      ativo: true,
+      criadoEm: serverTimestamp(),
+    });
+
+    for (const fonte of fontes) {
+      await addDoc(collection(db, `usuarios/${uid}/produtos/${refProduto.id}/fontes`), {
+        loja: fonte.loja,
+        url: fonte.url,
+        status: "pendente",   // as rules exigem; quem promove é o coletor
+        motivoInvalida: null,
+        falhasSeguidas: 0,
+        comErro: false,
+        ultimoPrecoCentavos: null,
+        ultimaColetaEm: null,
+      });
+    }
+
+    $("nome").value = "";
+    $("alvo").value = "";
+    $("tolerancia").value = "0";
+    $("pares").innerHTML = "";
+    adicionarParDeFonte();
+    idSelecionado = refProduto.id;
+  } catch (erro) {
+    erroForm(`Não foi possível cadastrar: ${erro.message || erro}`);
+  } finally {
+    $("btSalvar").disabled = false;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Leitura em tempo real
+// ---------------------------------------------------------------------------
+
+function observarProdutos() {
+  if (cancelarProdutos) cancelarProdutos();
+  cancelarProdutos = onSnapshot(
+    collection(db, `usuarios/${uid}/produtos`),
+    (instantaneo) => {
+      const vistos = new Set();
+      instantaneo.forEach((documento) => {
+        vistos.add(documento.id);
+        const existente = produtos.find((p) => p.id === documento.id);
+        if (existente) existente.dados = documento.data();
+        else produtos.push({ id: documento.id, dados: documento.data(), fontes: [] });
+        if (!cancelarFontes.has(documento.id)) observarFontes(documento.id);
+      });
+      produtos = produtos.filter((p) => vistos.has(p.id));
+      if (!idSelecionado || !vistos.has(idSelecionado)) {
+        idSelecionado = produtos.length ? produtos[0].id : null;
+      }
+      renderizarLista();
+      carregarHistorico();
+    },
+    (erro) => console.error("falha ao observar produtos", erro),
+  );
+}
+
+function observarFontes(produtoId) {
+  const cancelar = onSnapshot(
+    collection(db, `usuarios/${uid}/produtos/${produtoId}/fontes`),
+    (instantaneo) => {
+      const produto = produtos.find((p) => p.id === produtoId);
+      if (!produto) return;
+      // Ordem estável por id: a cor segue a fonte, não a posição na lista.
+      produto.fontes = instantaneo.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => (a.id < b.id ? -1 : 1));
+      renderizarLista();
+      if (produtoId === idSelecionado) carregarHistorico();
+    },
+    (erro) => console.error("falha ao observar fontes", erro),
+  );
+  cancelarFontes.set(produtoId, cancelar);
+}
+
+// ---------------------------------------------------------------------------
+// Lista de produtos
+// ---------------------------------------------------------------------------
+
+/** Escapa texto que vai para innerHTML. Nome de produto e loja são digitados
+ *  pelo usuário e não podem virar markup. */
+function esc(valor) {
+  return String(valor ?? "").replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[ch]);
+}
+
+/** Versão curta da URL para exibir: sem esquema, sem `www.`, sem query string.
+ *  A URL completa fica no href e no title. */
+function encurtarUrl(url, limite = 44) {
+  let texto = url;
+  try {
+    const partes = new URL(url);
+    texto = partes.hostname.replace(/^www\./, "") + partes.pathname.replace(/\/$/, "");
+  } catch {
+    /* URL malformada: mostra o que veio, truncado */
+  }
+  return texto.length <= limite ? texto : texto.slice(0, limite - 1) + "…";
+}
+
+function menorPrecoAtual(produto) {
+  const precos = produto.fontes
+    .filter((f) => f.status === "ok" && !f.comErro && typeof f.ultimoPrecoCentavos === "number")
+    .map((f) => f.ultimoPrecoCentavos);
+  return precos.length ? Math.min(...precos) : null;
+}
+
+function seloDaFonte(fonte) {
+  if (fonte.status === "pendente") return `<span class="selo pendente">⏳ validando fonte…</span>`;
+  if (fonte.status === "invalida") {
+    return `<span class="selo invalida">✕ inválida</span>
+            <span class="motivo">${esc(fonte.motivoInvalida || "não foi possível ler o preço")}</span>`;
+  }
+  if (fonte.comErro) return `<span class="selo invalida">⚠ desativada por falhas</span>`;
+  return `<span class="selo">✓ ok</span>`;
+}
+
+function renderizarLista() {
+  const cores = tokens().series;
+  const lista = $("lista");
+  lista.innerHTML = "";
+  $("semProdutos").classList.toggle("oculto", produtos.length > 0);
+
+  for (const produto of produtos) {
+    const menor = menorPrecoAtual(produto);
+    const emAlerta = produto.dados.estado === "EM_ALERTA";
+    const cartao = document.createElement("div");
+    cartao.className = "produto";
+    cartao.setAttribute("aria-selected", String(produto.id === idSelecionado));
+
+    const fontesHtml = produto.fontes.map((fonte, indice) => `
+      <div class="fonte">
+        <span class="amostra" style="background:${cores[indice % MAX_SERIES]}"></span>
+        <span class="loja-nome">${esc(fonte.loja)}</span>
+        ${seloDaFonte(fonte)}
+        <a class="endereco" href="${esc(fonte.url)}" target="_blank" rel="noopener noreferrer"
+           title="${esc(fonte.url)}">${esc(encurtarUrl(fonte.url))}</a>
+        ${fonte.status === "invalida"
+          ? `<button class="discreto remover-fonte" data-produto="${esc(produto.id)}" data-fonte="${esc(fonte.id)}">remover</button>`
+          : ""}
+      </div>`).join("");
+
+    cartao.innerHTML = `
+      <div class="cabeca">
+        <span class="nome" title="${esc(produto.dados.nome)}">${esc(produto.dados.nome)}</span>
+        ${emAlerta ? `<span class="selo alerta">🔻 em alerta</span>` : `<span class="selo">acima do alvo</span>`}
+        <span class="preco">${formatarBRL(menor)}</span>
+      </div>
+      <div class="meta">
+        alvo ${formatarBRL(produto.dados.precoAlvoCentavos)}
+        · tolerância ${produto.dados.toleranciaPct}%
+        · dispara em ${formatarBRL(produto.dados.precoGatilhoCentavos)}
+      </div>
+      <div class="fontes">${fontesHtml}</div>`;
+
+    cartao.addEventListener("click", (evento) => {
+      if (evento.target.closest(".remover-fonte")) return;
+      idSelecionado = produto.id;
+      renderizarLista();
+      carregarHistorico();
+    });
+    lista.appendChild(cartao);
+  }
+
+  lista.querySelectorAll(".remover-fonte").forEach((botao) => {
+    botao.addEventListener("click", async () => {
+      const { produto, fonte } = botao.dataset;
+      await deleteDoc(doc(db, `usuarios/${uid}/produtos/${produto}/fontes/${fonte}`));
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Histórico: 1d vem do bruto, os demais do rollup diário
+// ---------------------------------------------------------------------------
+
+const chaveMes = (d) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+const chaveAno = (d) => String(d.getUTCFullYear());
+const chaveDia = (d) =>
+  "d" + d.getUTCFullYear() +
+  String(d.getUTCMonth() + 1).padStart(2, "0") +
+  String(d.getUTCDate()).padStart(2, "0");
+
+function ligarSeletorDePeriodo() {
+  document.querySelectorAll(".periodos button").forEach((botao) => {
+    botao.addEventListener("click", () => {
+      periodo = botao.dataset.periodo;
+      document.querySelectorAll(".periodos button").forEach((b) =>
+        b.setAttribute("aria-pressed", String(b === botao)));
+      carregarHistorico();
+    });
+  });
+}
+ligarSeletorDePeriodo();
+
+async function lerBucket(caminho) {
+  const instantaneo = await getDoc(doc(db, caminho));
+  return instantaneo.exists() ? instantaneo.data() : null;
+}
+
+/** 1d: histórico bruto do mês, filtrado nas últimas 24h. */
+async function serie1d(produtoId, fonte) {
+  const agora = new Date();
+  const corte = new Date(agora.getTime() - 24 * 3600 * 1000);
+  const meses = new Set([chaveMes(agora), chaveMes(corte)]);  // cobre a virada
+  const pontos = [];
+  for (const mes of meses) {
+    const bucket = await lerBucket(
+      `usuarios/${uid}/produtos/${produtoId}/historico/${fonte.id}_${mes}`);
+    for (const leitura of (bucket && bucket.leituras) || []) {
+      if (leitura.p === null || leitura.p === undefined || leitura.s) continue;
+      const quando = leitura.t && leitura.t.toDate ? leitura.t.toDate() : new Date(leitura.t);
+      if (quando >= corte) pontos.push({ quando, centavos: leitura.p });
+    }
+  }
+  pontos.sort((a, b) => a.quando - b.quando);
+  return pontos;
+}
+
+/** 1s / 1m / 1a: rollup diário, usando o fechamento do dia. */
+async function serieDiaria(produtoId, fonte, dias) {
+  const agora = new Date();
+  const anos = new Set();
+  const chavesEsperadas = [];
+  for (let i = dias - 1; i >= 0; i--) {
+    const dia = new Date(agora.getTime() - i * 24 * 3600 * 1000);
+    anos.add(chaveAno(dia));
+    chavesEsperadas.push({ chave: chaveDia(dia), quando: dia });
+  }
+
+  const porChave = new Map();
+  for (const ano of anos) {
+    const bucket = await lerBucket(
+      `usuarios/${uid}/produtos/${produtoId}/diario/${fonte.id}_${ano}`);
+    for (const [chave, valores] of Object.entries((bucket && bucket.dias) || {})) {
+      if (typeof valores.fech === "number") porChave.set(chave, valores.fech);
+    }
+  }
+
+  return chavesEsperadas
+    .filter(({ chave }) => porChave.has(chave))
+    .map(({ chave, quando }) => ({ quando, centavos: porChave.get(chave) }));
+}
+
+const DIAS_POR_PERIODO = { "1s": 7, "1m": 30, "1a": 365 };
+
+async function carregarHistorico() {
+  const produto = produtos.find((p) => p.id === idSelecionado);
+  if (!produto) { dadosDoGrafico = null; desenhar(); return; }
+
+  $("tituloGrafico").textContent = `Histórico — ${produto.dados.nome}`;
+  const cores = tokens().series;
+  const fontes = produto.fontes.filter((f) => f.status === "ok").slice(0, MAX_SERIES);
+
+  const series = [];
+  const eixoTempo = new Map();  // rótulo -> instante, para ordenar
+  for (let indice = 0; indice < fontes.length; indice++) {
+    const fonte = fontes[indice];
+    const pontos = periodo === "1d"
+      ? await serie1d(produto.id, fonte)
+      : await serieDiaria(produto.id, fonte, DIAS_POR_PERIODO[periodo]);
+
+    for (const ponto of pontos) {
+      const rotulo = periodo === "1d"
+        ? ponto.quando.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+        : ponto.quando.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+      if (!eixoTempo.has(rotulo)) eixoTempo.set(rotulo, ponto.quando);
+    }
+    series.push({
+      nome: fonte.loja,
+      // cor pela posição estável da fonte, nunca pelo rank do preço
+      cor: cores[indice % MAX_SERIES],
+      pontos,
+    });
+  }
+
+  const rotulos = [...eixoTempo.entries()]
+    .sort((a, b) => a[1] - b[1])
+    .map(([rotulo]) => rotulo);
+
+  const formatoRotulo = (quando) => periodo === "1d"
+    ? quando.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+    : quando.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+
+  dadosDoGrafico = {
+    rotulos,
+    series: series.map((serie) => {
+      const porRotulo = new Map(serie.pontos.map((p) => [formatoRotulo(p.quando), p.centavos]));
+      return {
+        nome: serie.nome,
+        cor: serie.cor,
+        valores: rotulos.map((r) => (porRotulo.has(r) ? porRotulo.get(r) : null)),
+      };
+    }),
+  };
+
+  desenhar();
+  renderizarTabela();
+}
+
+// ---------------------------------------------------------------------------
+// Gráfico
+// ---------------------------------------------------------------------------
+
+/** Fio vertical de referência sob o ponto ativo. */
+const pluginFioVertical = {
+  id: "fioVertical",
+  afterDatasetsDraw(gr, _args, opcoes) {
+    const ativos = gr.tooltip && gr.tooltip.getActiveElements
+      ? gr.tooltip.getActiveElements() : [];
+    if (!ativos.length) return;
+    const x = ativos[0].element.x;
+    const { top, bottom } = gr.chartArea;
+    const ctx = gr.ctx;
+    ctx.save();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = opcoes.cor;
+    ctx.beginPath();
+    ctx.moveTo(x, top);
+    ctx.lineTo(x, bottom);
+    ctx.stroke();
+    ctx.restore();
+  },
+};
+
+/** Rótulo só na ponta de cada série — nunca um número em cada ponto. */
+const pluginRotuloDePonta = {
+  id: "rotuloDePonta",
+  afterDatasetsDraw(gr, _args, opcoes) {
+    const ctx = gr.ctx;
+    ctx.save();
+    ctx.font = "600 11px system-ui, -apple-system, sans-serif";
+    ctx.textBaseline = "middle";
+    gr.data.datasets.forEach((conjunto, indice) => {
+      const meta = gr.getDatasetMeta(indice);
+      if (meta.hidden) return;
+      let ultimo = null;
+      let indiceDoUltimo = -1;
+      for (let i = conjunto.data.length - 1; i >= 0; i--) {
+        if (conjunto.data[i] !== null && meta.data[i]) {
+          ultimo = meta.data[i];
+          indiceDoUltimo = i;
+          break;
+        }
+      }
+      if (!ultimo) return;
+      const texto = formatarBRL(conjunto.data[indiceDoUltimo]);
+      const largura = ctx.measureText(texto).width;
+      let x = ultimo.x + 8;
+      if (x + largura > gr.chartArea.right) x = ultimo.x - largura - 8;
+      // texto em tinta, nunca na cor da série: a identidade vem da legenda
+      ctx.fillStyle = opcoes.cor;
+      ctx.fillText(texto, x, ultimo.y);
+    });
+    ctx.restore();
+  },
+};
+
+function desenhar() {
+  const t = tokens();
+  const vazio = !dadosDoGrafico || !dadosDoGrafico.series.some((s) => s.valores.some((v) => v !== null));
+  $("semDados").classList.toggle("oculto", !vazio);
+  $("molduraGrafico").classList.toggle("oculto", vazio);
+
+  if (grafico) { grafico.destroy(); grafico = null; }
+  if (vazio) return;
+
+  const denso = dadosDoGrafico.rotulos.length > 40;
+
+  grafico = new Chart($("grafico"), {
+    type: "line",
+    data: {
+      labels: dadosDoGrafico.rotulos,
+      datasets: dadosDoGrafico.series.map((serie) => ({
+        label: serie.nome,
+        data: serie.valores,
+        borderColor: serie.cor,
+        backgroundColor: serie.cor,
+        borderWidth: 2,               // marca fina
+        pointRadius: denso ? 0 : 4,   // 8px de diâmetro quando visível
+        pointHoverRadius: 5,
+        pointBorderColor: t.superficie,
+        pointBorderWidth: 2,          // anel de 2px na superfície
+        tension: 0.15,
+        spanGaps: true,
+      })),
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      layout: { padding: { right: 68, top: 8 } },   // espaço para o rótulo de ponta
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        // legenda sempre presente com 2+ séries; com uma só, o título nomeia
+        legend: {
+          display: dadosDoGrafico.series.length >= 2,
+          position: "top",
+          align: "start",
+          labels: { color: t.tinta2, boxWidth: 10, boxHeight: 10, usePointStyle: true, padding: 16 },
+        },
+        tooltip: {
+          backgroundColor: t.superficie,
+          borderColor: t.eixo,
+          borderWidth: 1,
+          titleColor: t.tinta,
+          bodyColor: t.tinta2,
+          padding: 10,
+          displayColors: true,
+          callbacks: {
+            label: (ctx) => ` ${ctx.dataset.label}: ${formatarBRL(ctx.parsed.y)}`,
+          },
+        },
+        fioVertical: { cor: t.eixo },
+        rotuloDePonta: { cor: t.tinta2 },
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          border: { color: t.eixo },
+          ticks: {
+            color: t.fraca, maxRotation: 0, autoSkip: true, maxTicksLimit: 8,
+            font: { size: 11 },
+          },
+        },
+        y: {
+          grid: { color: t.grade, drawTicks: false },   // hairline sólida
+          border: { display: false },
+          ticks: {
+            color: t.fraca, font: { size: 11 },
+            callback: (valor) => formatarBRL(valor),
+          },
+        },
+      },
+    },
+    plugins: [pluginFioVertical, pluginRotuloDePonta],
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Tabela equivalente (gêmea do gráfico, exigida pela acessibilidade)
+// ---------------------------------------------------------------------------
+
+$("btTabela").addEventListener("click", () => {
+  const botao = $("btTabela");
+  const mostrando = botao.getAttribute("aria-pressed") === "true";
+  botao.setAttribute("aria-pressed", String(!mostrando));
+  botao.textContent = mostrando ? "Ver como tabela" : "Ver como gráfico";
+  $("areaTabela").classList.toggle("oculto", mostrando);
+  $("molduraGrafico").classList.toggle("oculto", !mostrando);
+});
+
+function renderizarTabela() {
+  if (!dadosDoGrafico) { $("areaTabela").innerHTML = ""; return; }
+  const cabecalho = dadosDoGrafico.series.map((s) => `<th class="num">${esc(s.nome)}</th>`).join("");
+  const linhas = dadosDoGrafico.rotulos.map((rotulo, i) => `
+    <tr>
+      <td>${rotulo}</td>
+      ${dadosDoGrafico.series.map((s) => `<td class="num">${formatarBRL(s.valores[i])}</td>`).join("")}
+    </tr>`).join("");
+  $("areaTabela").innerHTML =
+    `<table><thead><tr><th>Quando</th>${cabecalho}</tr></thead><tbody>${linhas}</tbody></table>`;
+}
