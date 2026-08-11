@@ -10,7 +10,9 @@ import pytest
 import respx
 
 from coletor.coleta import LimitadorPorHost
-from coletor.raspagem import Categoria, raspar, raspar_categoria, url_da_pagina
+from coletor.raspagem import (
+    Categoria, raspar, raspar_categoria, total_declarado, url_da_pagina,
+)
 from conftest import ler_fixture
 
 URL_CATEGORIA = "https://loja.example/hardware/placa-de-video"
@@ -213,3 +215,63 @@ async def test_categoria_que_falha_nao_derruba_as_outras(limitador):
 
     assert total["categorias"] == 1
     assert total["itens"] == 1
+
+
+# --- aviso de truncamento ----------------------------------------------------
+
+
+def pagina_com_total(total, *skus):
+    """Página que declara ter `total` produtos mas rende só os `skus`."""
+    return pagina_com(*skus).replace(
+        "<body>", f'<body><script>var estado = {{"total":{total}}};</script>'
+    )
+
+
+@pytest.mark.parametrize(
+    "html, esperado",
+    [
+        ('{"total":426}', 426),
+        ('{"total": 152 }', 152),
+        ('{"outro":1}', None),
+        ("", None),
+        ('{"total":"abc"}', None),
+    ],
+)
+def test_total_declarado(html, esperado):
+    assert total_declarado(html) == esperado
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_avisa_quando_a_pagina_rende_menos_do_que_declara(limitador, caplog):
+    """/gabinetes declarava 1274 e renderizava 25 — 2%."""
+    respx.get(URL_CATEGORIA).mock(
+        return_value=httpx.Response(200, text=pagina_com_total(1274, "1", "2"))
+    )
+    async with httpx.AsyncClient() as cliente:
+        with caplog.at_level("WARNING"):
+            await raspar_categoria(
+                Categoria.da_url(URL_CATEGORIA), cliente,
+                user_agent=UA, teto_centavos=TETO, limitador=limitador,
+            )
+
+    assert any("TRUNCADA" in m for m in caplog.messages)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_nao_avisa_quando_a_pagina_rende_o_que_declara(limitador, caplog):
+    respx.get(URL_CATEGORIA, params={"page_number": "2"}).mock(
+        return_value=httpx.Response(200, text=pagina_com_total(2, "1", "2"))
+    )
+    respx.get(URL_CATEGORIA).mock(
+        return_value=httpx.Response(200, text=pagina_com_total(2, "1", "2"))
+    )
+    async with httpx.AsyncClient() as cliente:
+        with caplog.at_level("WARNING"):
+            await raspar_categoria(
+                Categoria.da_url(URL_CATEGORIA), cliente,
+                user_agent=UA, teto_centavos=TETO, limitador=limitador,
+            )
+
+    assert not any("TRUNCADA" in m for m in caplog.messages)

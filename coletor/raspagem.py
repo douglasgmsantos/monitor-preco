@@ -114,6 +114,48 @@ def url_da_pagina(url: str, pagina: int) -> str:
     )
 
 
+FRACAO_MINIMA_ACEITAVEL = 80   # por cento do total declarado
+
+
+def total_declarado(html: str) -> int | None:
+    """Total de produtos que a página diz ter, quando ela diz.
+
+    Heurística deliberada e best-effort: procura `"total":N` no estado que a
+    página embute. Não é contrato de ninguém — serve só para diagnóstico, e por
+    isso um valor ausente ou estranho não é erro.
+    """
+    marca = '"total":'
+    posicao = html.find(marca)
+    if posicao == -1:
+        return None
+    digitos = ""
+    for caractere in html[posicao + len(marca):]:
+        if caractere.isdigit():
+            digitos += caractere
+        elif digitos or not caractere.isspace():
+            break
+    return int(digitos) if digitos.isdigit() and digitos else None
+
+
+def _avisar_se_truncado(categoria: "Categoria", html: str, extraidos: int) -> None:
+    """Grita quando a página rende bem menos do que declara ter.
+
+    Página com scroll infinito entrega uma fração dos produtos e a varredura
+    termina achando que acabou. Sem este aviso, o catálogo fica incompleto em
+    silêncio — que é a pior forma de ficar incompleto.
+    """
+    total = total_declarado(html)
+    if not total or not extraidos:
+        return
+    if extraidos * 100 < total * FRACAO_MINIMA_ACEITAVEL:
+        logger.warning(
+            "categoria %s TRUNCADA: %d de %d produtos (%.0f%%). A página carrega "
+            "o resto por scroll e a URL não pagina — prefira subcategorias "
+            "menores que o teto de renderização.",
+            categoria.nome, extraidos, total, 100 * extraidos / total,
+        )
+
+
 async def raspar_categoria(
     categoria: Categoria,
     cliente: httpx.AsyncClient,
@@ -149,6 +191,9 @@ async def raspar_categoria(
             )
         else:
             achados = extrair_lista(html or "", teto_centavos=teto_centavos)
+
+        if pagina == 1:
+            _avisar_se_truncado(categoria, html or "", len(achados))
 
         novos = [i for i in achados if i.sku and i.sku not in vistos]
         if not novos:
