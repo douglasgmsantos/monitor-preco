@@ -12,7 +12,7 @@ concurrency:
 jobs:
   ciclo:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -33,6 +33,6 @@ jobs:
           TETO_CENTAVOS:          '100000000'
           MARGEM_MEDIA_PCT:       '10'
           INTERVALO_RASPAGEM_HORAS: '24'
-          CATEGORIAS_RASPAGEM:    'https://www.kabum.com.br/hardware/placa-de-video-vga,https://www.terabyteshop.com.br/hardware/hard-disk/ssd,https://www.terabyteshop.com.br/hardware/memorias/ddr5,https://www.terabyteshop.com.br/hardware/memorias/memoria-p-notebook,https://www.terabyteshop.com.br/hardware/placas-de-video'
+          CATEGORIAS_RASPAGEM:    'https://www.kabum.com.br/hardware,https://www.kabum.com.br/hardware/ssd-2-5,https://www.kabum.com.br/hardware/kit-hardware,https://www.kabum.com.br/hardware/coolers,https://www.kabum.com.br/hardware/disco-rigido-hd,https://www.kabum.com.br/hardware/fontes,https://www.kabum.com.br/hardware/memoria-ram,https://www.kabum.com.br/hardware/placa-de-video-vga,https://www.kabum.com.br/hardware/placas-mae,https://www.kabum.com.br/hardware/processadores,https://www.terabyteshop.com.br/hardware/hard-disk/ssd,https://www.terabyteshop.com.br/hardware/memorias/ddr5,https://www.terabyteshop.com.br/hardware/memorias/memoria-p-notebook,https://www.terabyteshop.com.br/hardware/placas-de-video'
           USER_AGENT:             'MonitorPrecos/1.0 (uso pessoal)'
         run: python -m coletor.main

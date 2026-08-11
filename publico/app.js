@@ -697,13 +697,12 @@ function renderizarLista() {
     cartao.innerHTML = `
       <div class="cabeca">
         <span class="nome" title="${esc(produto.dados.nome)}">${esc(produto.dados.nome)}</span>
-        ${seloEstado}
         <span class="preco">${formatarBRL(menor)}</span>
+        ${seloEstado}
       </div>
       <div class="meta">
-        alvo ${formatarBRL(produto.dados.precoAlvoCentavos)}
-        · tolerância ${produto.dados.toleranciaPct}%
-        · dispara em ${formatarBRL(produto.dados.precoGatilhoCentavos)}
+        alvo ${formatarBRL(produto.dados.precoAlvoCentavos)} · tol. ${produto.dados.toleranciaPct}%<br>
+        dispara em ${formatarBRL(produto.dados.precoGatilhoCentavos)}
       </div>
       <div class="fontes">${fontesHtml}</div>
       <div class="acoes">
