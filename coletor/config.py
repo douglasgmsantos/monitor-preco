@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 # Valores padrão em um lugar só, para que testes e produção não divirjam.
 TETO_CENTAVOS_PADRAO = 100_000_000
-INTERVALO_COLETA_HORAS_PADRAO = 6
+INTERVALO_COLETA_HORAS_PADRAO = 1
 LIMIAR_SANIDADE_PADRAO = "0.70"
 USER_AGENT_PADRAO = "MonitorPrecos/1.0 (uso pessoal)"
 MARGEM_MEDIA_PCT_PADRAO = 10

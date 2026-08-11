@@ -20,16 +20,17 @@ Não há busca nem descoberta de produtos: você informa as URLs.
 | 2 | `coletor/repositorio.py` | ✅ 28 testes contra o emulador |
 | 3 | `coletor/coleta.py` | ✅ 24 testes com `respx` |
 | 4 | `coletor/alertas.py`, `notificador.py` | ✅ 31 testes, sem rede |
-| 5 | `coletor/main.py`, workflow do Actions | ✅ código pronto; portão oficial (`workflow_dispatch`) pendente |
+| 5 | `coletor/main.py`, workflow do Actions | ✅ em produção; 1 execução bem-sucedida registrada |
 | 6 | front (`publico/`) | ✅ publicado em https://report-price.web.app |
+| — | security rules | ✅ 24 testes contra o emulador (`tests/test_rules.py`) |
 
 ```
-166 passed, 1 skipped
+208 passed, 1 skipped
 ```
 
 O ciclo foi validado ponta a ponta contra o emulador, usando uma URL real de
 loja: fonte pendente → coleta HTTP → parser → buckets no Firestore → máquina de
-estados → mensagem formatada. A janela de 6h bloqueia execução fora de hora e o
+estados → mensagem formatada. A janela de coleta bloqueia execução fora de hora e o
 cooldown de 24h cala a renotificação, ambos verificados.
 
 O portão da §13 para esta fase é um `workflow_dispatch` real no GitHub, que
@@ -61,8 +62,8 @@ Admin SDK, que ignora as rules.
 
 | Peça | Limite gratuito | Uso previsto |
 |---|---|---|
-| Firestore leituras | 50.000/dia | ~50/dia |
-| Firestore escritas | 20.000/dia | ~50/dia |
+| Firestore leituras | 50.000/dia | ~100/dia |
+| Firestore escritas | 20.000/dia | ~100/dia |
 | Firestore armazenamento | 1 GB | ~1 MB/ano |
 | Firebase Auth | ilimitado | 1 usuário |
 | Firebase Hosting | 10 GB / 360 MB por dia | ~250 KB |
@@ -132,6 +133,11 @@ usuarios/{uid}/produtos/{produtoId}
 sistema/controle                        GLOBAL (coleção raiz)
     ultimaColetaEm
 ```
+
+> **Atenção aos dois campos homônimos.** `sistema/controle.ultimaColetaEm` é o
+> **portão**: decide se o ciclo coleta. `fontes/{id}.ultimaColetaEm` é apenas
+> informativo — é escrito a cada coleta e nunca lido para decidir nada.
+> Intervalo atual: **3 horas** (`INTERVALO_COLETA_HORAS`).
 
 Bucketing existe porque um documento por leitura faria o gráfico de 1 ano custar
 365 leituras cobradas por abertura. Com buckets: 1 documento para `1d`, 1–2 para
@@ -324,7 +330,7 @@ ignore esse e-mail.
 O cron roda de 15 em 15 minutos, mas a coleta pesada só acontece quando
 `sistema/controle.ultimaColetaEm` indica que o intervalo real passou. O GitHub
 atrasa e **pula** execuções sob carga; a cadência efetiva é "pelo menos a cada
-6h", não "exatamente às 00h, 06h, 12h, 18h". Nunca calcule o tempo decorrido a
+3h", não "exatamente às 00h, 03h, 06h…". Nunca calcule o tempo decorrido a
 partir do horário agendado.
 
 ---
