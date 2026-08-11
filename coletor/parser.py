@@ -68,6 +68,32 @@ class ItemDeLista:
     url: str | None
     preco_centavos: int | None
     disponivel: bool | None
+    # Preço "de" riscado, quando a vitrine publica os dois. A KaBuM publica só
+    # um valor no JSON-LD (que é o de tabela); o Terabyte publica os dois no
+    # HTML, e aí `preco_centavos` é o de venda de verdade.
+    preco_tabela_centavos: int | None = None
+
+
+@dataclass(frozen=True)
+class SeletoresDeListagem:
+    """Onde achar cada campo no HTML de uma loja.
+
+    Seletores são DADOS, não código: quando a loja mexe no layout, o conserto é
+    editar esta tabela, e o teste com fixture congelada avisa alto que ela
+    mudou. É o preço de trabalhar com lojas que não publicam JSON-LD.
+    """
+
+    item: str
+    nome: str
+    url: str
+    preco: str
+    preco_tabela: str | None = None
+    nome_atributo: str | None = None   # ex.: title, quando o texto é truncado
+    # Lojas que escrevem "Indisponível" no lugar do preço estão informando
+    # estoque de graça — algo que o JSON-LD da listagem não dá.
+    marcadores_indisponivel: tuple[str, ...] = (
+        "indisponível", "indisponivel", "esgotado", "sem estoque", "avise-me",
+    )
 
 
 # ----------------------------------------------------------------------------
@@ -424,6 +450,138 @@ def extrair_lista(html: str, *, teto_centavos: int = TETO_CENTAVOS) -> list[Item
                 )
             )
     return itens
+
+
+def extrair_lista_dom(
+    html: str,
+    seletores: SeletoresDeListagem,
+    *,
+    base_url: str = "",
+    teto_centavos: int = TETO_CENTAVOS,
+) -> list[ItemDeLista]:
+    """Extrai produtos de uma listagem que NÃO publica JSON-LD.
+
+    Função pura, como as demais. Usa o parser de DOM — nunca regex sobre HTML.
+    O contrato aqui é o layout da loja, não o schema.org: mais frágil por
+    natureza, e por isso testado contra fixture congelada.
+    """
+    arvore = HTMLParser(html or "")
+    itens: list[ItemDeLista] = []
+    vistos: set[str] = set()
+
+    for cartao in arvore.css(seletores.item):
+        no_url = cartao.css_first(seletores.url)
+        url = _absolutizar(no_url.attributes.get("href") if no_url else None, base_url)
+        if not url:
+            continue
+
+        bruto = _texto_do_seletor(cartao, seletores.preco, None) or ""
+        esgotado = any(
+            marcador in bruto.lower() for marcador in seletores.marcadores_indisponivel
+        )
+        centavos = (
+            None if esgotado
+            else _centavos_do_seletor(cartao, seletores.preco, teto_centavos)
+        )
+        if centavos is None and not esgotado:
+            continue   # nem preço nem sinal de esgotado: cartão que não é produto
+
+        sku = _sku_da_url(url)
+        chave = sku or url
+        if chave in vistos:
+            continue
+        vistos.add(chave)
+
+        itens.append(
+            ItemDeLista(
+                sku=sku,
+                nome=_texto_do_seletor(cartao, seletores.nome, seletores.nome_atributo),
+                url=url,
+                preco_centavos=centavos,
+                # Aqui a listagem INFORMA estoque: preço legível significa
+                # comprável; o marcador significa esgotado.
+                disponivel=not esgotado,
+                preco_tabela_centavos=(
+                    None if esgotado
+                    else _centavos_do_seletor(
+                        cartao, seletores.preco_tabela, teto_centavos
+                    )
+                ),
+            )
+        )
+    return itens
+
+
+def _texto_do_seletor(cartao, seletor: str, atributo: str | None) -> str | None:
+    no = cartao.css_first(seletor)
+    if no is None:
+        return None
+    if atributo:
+        valor = no.attributes.get(atributo)
+        if valor and valor.strip():
+            return entidades_html.unescape(valor.strip())
+    texto = no.text(deep=True, strip=True)
+    return entidades_html.unescape(texto) if texto else None
+
+
+def _centavos_do_seletor(cartao, seletor: str | None, teto_centavos: int) -> int | None:
+    """Lê o primeiro nó do seletor e normaliza o texto para centavos.
+
+    O texto costuma vir sujo — "R$ 589,90à vista no Pix" — e é justamente por
+    isso que `normalizar_para_centavos` descarta tudo que não é dígito ou
+    separador em vez de tentar casar um padrão.
+    """
+    if not seletor:
+        return None
+    no = cartao.css_first(seletor)
+    if no is None:
+        return None
+    bruto = no.text(deep=True, strip=True)
+    if not bruto:
+        return None
+    # "R$ 589,90à vista no Pix" -> corta no primeiro trecho monetário
+    corte = _primeiro_valor_monetario(bruto)
+    return normalizar_para_centavos(corte, teto_centavos=teto_centavos)
+
+
+def _primeiro_valor_monetario(texto: str) -> str:
+    """Recorta o primeiro número com separador decimal do texto.
+
+    Percorre caractere a caractere: começa no primeiro dígito e para quando o
+    número termina. Sem regex, e sem depender do símbolo da moeda.
+    """
+    inicio = next((i for i, c in enumerate(texto) if c.isdigit()), None)
+    if inicio is None:
+        return texto
+    fim = inicio
+    while fim < len(texto) and (texto[fim].isdigit() or texto[fim] in ".,"):
+        fim += 1
+    # não deixa um separador solto no fim ("589,90à" -> "589,90")
+    while fim > inicio and texto[fim - 1] in ".,":
+        fim -= 1
+    return texto[inicio:fim]
+
+
+def _absolutizar(href: str | None, base_url: str) -> str | None:
+    if not href:
+        return None
+    href = href.strip()
+    if href.startswith(("http://", "https://")):
+        return href
+    if not base_url:
+        return None
+    partes = urlsplit(base_url)
+    if not href.startswith("/"):
+        href = "/" + href
+    return f"{partes.scheme}://{partes.netloc}{href}"
+
+
+def _sku_da_url(url: str) -> str | None:
+    trechos = [t for t in urlsplit(url).path.split("/") if t]
+    for trecho in trechos:
+        if trecho.isdigit():
+            return trecho
+    return trechos[-1] if trechos else None
 
 
 def _disponibilidade_opcional(oferta: dict) -> bool | None:

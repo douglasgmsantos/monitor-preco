@@ -806,7 +806,10 @@ async function carregarCatalogo() {
         for (const [sku, i] of Object.entries(dados.itens || {})) {
           catalogo.push({
             loja: loja.id, categoria: indice.id, sku,
-            nome: i.n || "", url: i.u || "", tabela: i.p ?? null,
+            nome: i.n || "", url: i.u || "",
+            preco: i.p ?? null,          // preço que a vitrine apresenta
+            tabela: i.t ?? null,         // preço "de" riscado, quando publicado
+            disponivel: i.d ?? null,
           });
         }
       }
@@ -845,11 +848,16 @@ function renderizarCatalogo() {
   const ordem = $("ordemCatalogo").value;
   const seguidas = urlsAcompanhadas();
 
-  let itens = catalogo.filter((i) => i.tabela !== null);
+  let itens = catalogo.filter((i) => i.preco !== null || i.disponivel === false);
   if (categoria) itens = itens.filter((i) => i.categoria === categoria);
   if (busca) itens = itens.filter((i) => i.nome.toLowerCase().includes(busca));
-  itens.sort((a, b) =>
-    ordem === "nome" ? a.nome.localeCompare(b.nome, "pt-BR") : a.tabela - b.tabela);
+  itens.sort((a, b) => {
+    if (ordem === "nome") return a.nome.localeCompare(b.nome, "pt-BR");
+    // esgotados vão para o fim, não para o topo com preço nulo
+    if (a.preco === null) return 1;
+    if (b.preco === null) return -1;
+    return a.preco - b.preco;
+  });
 
   const total = categoriasDoCatalogo.reduce((soma, c) => soma + c.quantidade, 0);
   $("resumoCatalogo").textContent = total
@@ -859,14 +867,29 @@ function renderizarCatalogo() {
 
   grade.innerHTML = itens.map((i) => {
     const jaSegue = seguidas.has(i.url);
+    const esgotado = i.disponivel === false;
+
+    // A loja que publica o preço "de" riscado está mostrando o preço de VENDA
+    // no destaque. Quem publica só um valor (KaBuM) publica o de tabela — foi
+    // medido, 10% a 31% acima da página do produto. O rótulo diz qual é qual.
+    const linhaPreco = esgotado
+      ? `<div class="tabela"><span class="dica">esgotado</span></div>`
+      : i.tabela
+        ? `<div class="tabela">${formatarBRL(i.preco)}
+             <s class="dica">${formatarBRL(i.tabela)}</s></div>`
+        : `<div class="tabela">${formatarBRL(i.preco)}
+             <span class="dica">de tabela</span></div>`;
+
     return `
-      <div class="item ${jaSegue ? "seguido" : ""}">
+      <div class="item ${jaSegue ? "seguido" : ""} ${esgotado ? "esgotado" : ""}">
         <div class="titulo" title="${esc(i.nome)}">${esc(i.nome)}</div>
-        <div class="tabela">${formatarBRL(i.tabela)} <span class="dica">de tabela</span></div>
+        ${linhaPreco}
         <div class="rodape">
           ${jaSegue
             ? `<span class="ja-segue">★ já acompanhado</span>`
-            : `<button class="discreto acompanhar" data-sku="${esc(i.sku)}">☆ acompanhar</button>`}
+            : esgotado
+              ? ""
+              : `<button class="discreto acompanhar" data-sku="${esc(i.sku)}">☆ acompanhar</button>`}
           <a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">abrir na loja ↗</a>
         </div>
       </div>`;
@@ -894,7 +917,7 @@ function acompanharDoCatalogo(sku) {
   adicionarParDeFonte({ loja: nomeDaLoja, url: item.url });
 
   $("alvo").value = "";
-  $("alvo").placeholder = `abaixo de ${formatarBRL(item.tabela).replace("R$", "").trim()}`;
+  $("alvo").placeholder = `abaixo de ${formatarBRL(item.preco).replace("R$", "").trim()}`;
   $("tituloForm").textContent = "Acompanhar produto do catálogo";
   erroForm(null);
   $("alvo").scrollIntoView({ behavior: "smooth", block: "center" });

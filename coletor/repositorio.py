@@ -435,12 +435,18 @@ class Repositorio:
             return {}
         return (snapshot.to_dict() or {}).get("itens") or {}
 
-    def ler_indice_do_catalogo(self, loja: str, categoria: str) -> dict[str, int]:
-        """Só os preços, para detectar o que mudou desde a última raspagem."""
+    def ler_indice_do_catalogo(
+        self, loja: str, categoria: str
+    ) -> dict[str, tuple[int | None, bool | None]]:
+        """Par (preço, disponível) por SKU, para detectar o que mudou.
+
+        O par, e não só o preço: um produto que sai de estoque mudou, mesmo com
+        o preço igual.
+        """
         return {
-            sku: dados.get("p")
+            sku: (dados.get("p"), dados.get("d"))
             for sku, dados in self.ler_vitrine(loja, categoria).items()
-            if isinstance(dados, dict) and dados.get("p") is not None
+            if isinstance(dados, dict)
         }
 
     def salvar_catalogo(
@@ -461,21 +467,35 @@ class Repositorio:
             .collection(COLECAO_ITENS)
         )
 
-        resumo = {"novos": 0, "alterados": 0, "inalterados": 0, "sem_sku": 0}
+        resumo = {
+            "novos": 0, "alterados": 0, "inalterados": 0,
+            "esgotados": 0, "sem_sku": 0,
+        }
         vitrine: dict[str, dict] = {}
         pendentes = []
 
         for item in itens:
-            if not item.sku or item.preco_centavos is None:
+            if not item.sku:
                 resumo["sem_sku"] += 1
                 continue
-            vitrine[item.sku] = {
+            if item.preco_centavos is None and item.disponivel is not False:
+                # sem preço e sem sinal de esgotado: não dá para catalogar
+                resumo["sem_sku"] += 1
+                continue
+            if item.disponivel is False:
+                resumo["esgotados"] += 1
+
+            entrada = {
                 "n": item.nome,
                 "u": item.url,
                 "p": item.preco_centavos,
+                "d": item.disponivel,
+                "t": item.preco_tabela_centavos,
             }
+            vitrine[item.sku] = entrada
             antes = anterior.get(item.sku)
-            if antes == item.preco_centavos:
+            # sair de estoque é mudança tanto quanto mudar de preço
+            if antes is not None and antes == (item.preco_centavos, item.disponivel):
                 resumo["inalterados"] += 1
                 continue
             resumo["novos" if antes is None else "alterados"] += 1
@@ -488,8 +508,9 @@ class Repositorio:
                         "url": item.url,
                         "categoria": categoria,
                         "loja": loja,
-                        # o nome do campo diz que NÃO é o preço de venda
-                        "precoTabelaCentavos": item.preco_centavos,
+                        "precoCentavos": item.preco_centavos,
+                        "precoTabelaCentavos": item.preco_tabela_centavos,
+                        "disponivel": item.disponivel,
                         "atualizadoEm": agora,
                     },
                 )

@@ -157,6 +157,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .item .rodape a { color: var(--tinta-fraca); font-size: 12px; text-decoration: none; }
 .item .rodape a:hover { color: var(--serie-1); text-decoration: underline; }
 .item.seguido { border-color: var(--serie-1); }
+.item.esgotado { opacity: 0.55; }
+.item .tabela s { font-weight: 400; font-size: 13px; }
 .item .ja-segue { font-size: 12px; color: var(--serie-1); }
 
 .fontes { display: grid; gap: 6px; margin-top: 10px; }
@@ -269,10 +271,11 @@ label { display: block; font-size: 13px; color: var(--tinta-2); margin-bottom: 4
       </select>
     </div>
     <p class="aviso-loja">
-      Os preços aqui são os de <strong>tabela</strong>, publicados na vitrine da loja.
-      Medidos em 2026-08-10, ficavam de <strong>10% a 31% acima</strong> do preço real
-      da página do produto. Servem para achar o produto, não para decidir compra — ao
-      acompanhar, o preço passa a vir da página e é esse que dispara o alerta.
+      Onde aparece um preço <s>riscado</s> ao lado, o valor em destaque é o de
+      <strong>venda</strong>. Onde aparece "de tabela", a loja publica só o preço cheio —
+      medido em 2026-08-10, de <strong>10% a 31% acima</strong> do preço real da página.
+      Em qualquer caso, ao acompanhar o preço passa a vir da página do produto, e é
+      esse que dispara o alerta.
     </p>
     <div id="gradeCatalogo" class="grade"></div>
     <p id="catalogoVazio" class="vazio oculto">Catálogo ainda não foi raspado.</p>

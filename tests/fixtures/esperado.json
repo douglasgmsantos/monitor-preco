@@ -111,5 +111,1816 @@
         "nome": "Placa De Video Msi Geforce RTX 5060 Shadow 2x Oc 8GB Gddr7 1"
       }
     ]
+  },
+  "listagem_b.html": {
+    "loja": "Terabyte Shop",
+    "url": "https://www.terabyteshop.com.br/busca?str=placa+de+video",
+    "tipo": "listagem",
+    "extracao": "seletores de DOM — a loja NAO publica JSON-LD na listagem",
+    "interesse": "publica preco de venda E de tabela, e informa estoque com 'Indisponivel'; 300 itens em UMA requisicao",
+    "quantidade": 300,
+    "disponiveis": 95,
+    "itens": [
+      {
+        "sku": "28714",
+        "disponivel": true,
+        "preco_centavos": 58990,
+        "preco_tabela_centavos": 69400
+      },
+      {
+        "sku": "33025",
+        "disponivel": true,
+        "preco_centavos": 129999,
+        "preco_tabela_centavos": 152940
+      },
+      {
+        "sku": "34716",
+        "disponivel": true,
+        "preco_centavos": 705999,
+        "preco_tabela_centavos": 830587
+      },
+      {
+        "sku": "34851",
+        "disponivel": true,
+        "preco_centavos": 479999,
+        "preco_tabela_centavos": 564705
+      },
+      {
+        "sku": "34859",
+        "disponivel": true,
+        "preco_centavos": 399999,
+        "preco_tabela_centavos": 470587
+      },
+      {
+        "sku": "34860",
+        "disponivel": true,
+        "preco_centavos": 399999,
+        "preco_tabela_centavos": 470587
+      },
+      {
+        "sku": "35086",
+        "disponivel": true,
+        "preco_centavos": 135999,
+        "preco_tabela_centavos": 159999
+      },
+      {
+        "sku": "35242",
+        "disponivel": true,
+        "preco_centavos": 429999,
+        "preco_tabela_centavos": 505881
+      },
+      {
+        "sku": "36048",
+        "disponivel": true,
+        "preco_centavos": 389999,
+        "preco_tabela_centavos": 458822
+      },
+      {
+        "sku": "38293",
+        "disponivel": true,
+        "preco_centavos": 234999,
+        "preco_tabela_centavos": 276469
+      },
+      {
+        "sku": "38584",
+        "disponivel": true,
+        "preco_centavos": 459990,
+        "preco_tabela_centavos": 541165
+      },
+      {
+        "sku": "39095",
+        "disponivel": true,
+        "preco_centavos": 389999,
+        "preco_tabela_centavos": 458822
+      },
+      {
+        "sku": "39450",
+        "disponivel": true,
+        "preco_centavos": 779999,
+        "preco_tabela_centavos": 917646
+      },
+      {
+        "sku": "39452",
+        "disponivel": true,
+        "preco_centavos": 479999,
+        "preco_tabela_centavos": 564705
+      },
+      {
+        "sku": "39907",
+        "disponivel": true,
+        "preco_centavos": 423999,
+        "preco_tabela_centavos": 498822
+      },
+      {
+        "sku": "40135",
+        "disponivel": true,
+        "preco_centavos": 449990,
+        "preco_tabela_centavos": 529400
+      },
+      {
+        "sku": "40399",
+        "disponivel": true,
+        "preco_centavos": 199999,
+        "preco_tabela_centavos": 235293
+      },
+      {
+        "sku": "40483",
+        "disponivel": true,
+        "preco_centavos": 379999,
+        "preco_tabela_centavos": 447058
+      },
+      {
+        "sku": "25101",
+        "disponivel": true,
+        "preco_centavos": 178999,
+        "preco_tabela_centavos": 210587
+      },
+      {
+        "sku": "27959",
+        "disponivel": true,
+        "preco_centavos": 139999,
+        "preco_tabela_centavos": 164705
+      },
+      {
+        "sku": "28334",
+        "disponivel": true,
+        "preco_centavos": 139999,
+        "preco_tabela_centavos": 164705
+      },
+      {
+        "sku": "28713",
+        "disponivel": true,
+        "preco_centavos": 14999,
+        "preco_tabela_centavos": 17646
+      },
+      {
+        "sku": "33427",
+        "disponivel": true,
+        "preco_centavos": 194999,
+        "preco_tabela_centavos": 229411
+      },
+      {
+        "sku": "33896",
+        "disponivel": true,
+        "preco_centavos": 1249999,
+        "preco_tabela_centavos": 1470587
+      },
+      {
+        "sku": "34009",
+        "disponivel": true,
+        "preco_centavos": 2869999,
+        "preco_tabela_centavos": 3376469
+      },
+      {
+        "sku": "34703",
+        "disponivel": true,
+        "preco_centavos": 499999,
+        "preco_tabela_centavos": 588234
+      },
+      {
+        "sku": "34704",
+        "disponivel": true,
+        "preco_centavos": 429999,
+        "preco_tabela_centavos": 505881
+      },
+      {
+        "sku": "34750",
+        "disponivel": true,
+        "preco_centavos": 139999,
+        "preco_tabela_centavos": 164705
+      },
+      {
+        "sku": "34836",
+        "disponivel": true,
+        "preco_centavos": 489999,
+        "preco_tabela_centavos": 576469
+      },
+      {
+        "sku": "34886",
+        "disponivel": true,
+        "preco_centavos": 499999,
+        "preco_tabela_centavos": 588234
+      },
+      {
+        "sku": "35161",
+        "disponivel": true,
+        "preco_centavos": 2999999,
+        "preco_tabela_centavos": 3529411
+      },
+      {
+        "sku": "35284",
+        "disponivel": true,
+        "preco_centavos": 2699999,
+        "preco_tabela_centavos": 3176469
+      },
+      {
+        "sku": "35774",
+        "disponivel": true,
+        "preco_centavos": 249999,
+        "preco_tabela_centavos": 294116
+      },
+      {
+        "sku": "35805",
+        "disponivel": true,
+        "preco_centavos": 239999,
+        "preco_tabela_centavos": 282352
+      },
+      {
+        "sku": "36046",
+        "disponivel": true,
+        "preco_centavos": 379999,
+        "preco_tabela_centavos": 447058
+      },
+      {
+        "sku": "36059",
+        "disponivel": true,
+        "preco_centavos": 288990,
+        "preco_tabela_centavos": 339988
+      },
+      {
+        "sku": "36087",
+        "disponivel": true,
+        "preco_centavos": 259999,
+        "preco_tabela_centavos": 305881
+      },
+      {
+        "sku": "36107",
+        "disponivel": true,
+        "preco_centavos": 79999,
+        "preco_tabela_centavos": 94116
+      },
+      {
+        "sku": "36116",
+        "disponivel": true,
+        "preco_centavos": 519999,
+        "preco_tabela_centavos": 611764
+      },
+      {
+        "sku": "36347",
+        "disponivel": true,
+        "preco_centavos": 469999,
+        "preco_tabela_centavos": 552940
+      },
+      {
+        "sku": "36459",
+        "disponivel": true,
+        "preco_centavos": 319999,
+        "preco_tabela_centavos": 376469
+      },
+      {
+        "sku": "36460",
+        "disponivel": true,
+        "preco_centavos": 364999,
+        "preco_tabela_centavos": 429411
+      },
+      {
+        "sku": "36465",
+        "disponivel": true,
+        "preco_centavos": 339999,
+        "preco_tabela_centavos": 399999
+      },
+      {
+        "sku": "36484",
+        "disponivel": true,
+        "preco_centavos": 339999,
+        "preco_tabela_centavos": 399999
+      },
+      {
+        "sku": "36876",
+        "disponivel": true,
+        "preco_centavos": 209999,
+        "preco_tabela_centavos": 247058
+      },
+      {
+        "sku": "37167",
+        "disponivel": true,
+        "preco_centavos": 219999,
+        "preco_tabela_centavos": 258822
+      },
+      {
+        "sku": "37704",
+        "disponivel": true,
+        "preco_centavos": 749999,
+        "preco_tabela_centavos": 882352
+      },
+      {
+        "sku": "40617",
+        "disponivel": true,
+        "preco_centavos": 439999,
+        "preco_tabela_centavos": 517646
+      },
+      {
+        "sku": "40666",
+        "disponivel": true,
+        "preco_centavos": 349999,
+        "preco_tabela_centavos": 411764
+      },
+      {
+        "sku": "40668",
+        "disponivel": true,
+        "preco_centavos": 249999,
+        "preco_tabela_centavos": 294116
+      },
+      {
+        "sku": "40673",
+        "disponivel": true,
+        "preco_centavos": 199999,
+        "preco_tabela_centavos": 235293
+      },
+      {
+        "sku": "40674",
+        "disponivel": true,
+        "preco_centavos": 217999,
+        "preco_tabela_centavos": 256469
+      },
+      {
+        "sku": "40963",
+        "disponivel": true,
+        "preco_centavos": 2899999,
+        "preco_tabela_centavos": 3411764
+      },
+      {
+        "sku": "36959",
+        "disponivel": true,
+        "preco_centavos": 199990,
+        "preco_tabela_centavos": 235282
+      },
+      {
+        "sku": "40968",
+        "disponivel": true,
+        "preco_centavos": 126999,
+        "preco_tabela_centavos": 149411
+      },
+      {
+        "sku": "40977",
+        "disponivel": true,
+        "preco_centavos": 184999,
+        "preco_tabela_centavos": 217646
+      },
+      {
+        "sku": "40805",
+        "disponivel": true,
+        "preco_centavos": 489900,
+        "preco_tabela_centavos": 576353
+      },
+      {
+        "sku": "40809",
+        "disponivel": true,
+        "preco_centavos": 299999,
+        "preco_tabela_centavos": 352940
+      },
+      {
+        "sku": "34705",
+        "disponivel": true,
+        "preco_centavos": 439999,
+        "preco_tabela_centavos": 517646
+      },
+      {
+        "sku": "40448",
+        "disponivel": true,
+        "preco_centavos": 109999,
+        "preco_tabela_centavos": 129411
+      },
+      {
+        "sku": "40917",
+        "disponivel": true,
+        "preco_centavos": 119999,
+        "preco_tabela_centavos": 141175
+      },
+      {
+        "sku": "40979",
+        "disponivel": true,
+        "preco_centavos": 299999,
+        "preco_tabela_centavos": 352940
+      },
+      {
+        "sku": "41358",
+        "disponivel": true,
+        "preco_centavos": 194999,
+        "preco_tabela_centavos": 229411
+      },
+      {
+        "sku": "42065",
+        "disponivel": true,
+        "preco_centavos": 227999,
+        "preco_tabela_centavos": 268234
+      },
+      {
+        "sku": "42075",
+        "disponivel": true,
+        "preco_centavos": 299999,
+        "preco_tabela_centavos": 352940
+      },
+      {
+        "sku": "42082",
+        "disponivel": true,
+        "preco_centavos": 254999,
+        "preco_tabela_centavos": 299999
+      },
+      {
+        "sku": "42084",
+        "disponivel": true,
+        "preco_centavos": 289999,
+        "preco_tabela_centavos": 341175
+      },
+      {
+        "sku": "42384",
+        "disponivel": true,
+        "preco_centavos": 12999,
+        "preco_tabela_centavos": 15293
+      },
+      {
+        "sku": "42439",
+        "disponivel": true,
+        "preco_centavos": 29999,
+        "preco_tabela_centavos": 35293
+      },
+      {
+        "sku": "42517",
+        "disponivel": true,
+        "preco_centavos": 239999,
+        "preco_tabela_centavos": 282352
+      },
+      {
+        "sku": "42209",
+        "disponivel": true,
+        "preco_centavos": 239999,
+        "preco_tabela_centavos": 282352
+      },
+      {
+        "sku": "42210",
+        "disponivel": true,
+        "preco_centavos": 479999,
+        "preco_tabela_centavos": 564705
+      },
+      {
+        "sku": "42587",
+        "disponivel": true,
+        "preco_centavos": 2399999,
+        "preco_tabela_centavos": 2823528
+      },
+      {
+        "sku": "42579",
+        "disponivel": true,
+        "preco_centavos": 999999,
+        "preco_tabela_centavos": 1176469
+      },
+      {
+        "sku": "42639",
+        "disponivel": true,
+        "preco_centavos": 1039999,
+        "preco_tabela_centavos": 1223528
+      },
+      {
+        "sku": "42581",
+        "disponivel": true,
+        "preco_centavos": 35999,
+        "preco_tabela_centavos": 42352
+      },
+      {
+        "sku": "42582",
+        "disponivel": true,
+        "preco_centavos": 39999,
+        "preco_tabela_centavos": 47058
+      },
+      {
+        "sku": "42584",
+        "disponivel": true,
+        "preco_centavos": 99999,
+        "preco_tabela_centavos": 117646
+      },
+      {
+        "sku": "42641",
+        "disponivel": true,
+        "preco_centavos": 899999,
+        "preco_tabela_centavos": 1058822
+      },
+      {
+        "sku": "41749",
+        "disponivel": true,
+        "preco_centavos": 129999,
+        "preco_tabela_centavos": 152940
+      },
+      {
+        "sku": "42636",
+        "disponivel": true,
+        "preco_centavos": 239900,
+        "preco_tabela_centavos": 282235
+      },
+      {
+        "sku": "42775",
+        "disponivel": true,
+        "preco_centavos": 86999,
+        "preco_tabela_centavos": 102352
+      },
+      {
+        "sku": "42787",
+        "disponivel": true,
+        "preco_centavos": 289999,
+        "preco_tabela_centavos": 341175
+      },
+      {
+        "sku": "42788",
+        "disponivel": true,
+        "preco_centavos": 62999,
+        "preco_tabela_centavos": 74116
+      },
+      {
+        "sku": "42839",
+        "disponivel": true,
+        "preco_centavos": 239999,
+        "preco_tabela_centavos": 282352
+      },
+      {
+        "sku": "42841",
+        "disponivel": true,
+        "preco_centavos": 379999,
+        "preco_tabela_centavos": 447058
+      },
+      {
+        "sku": "40180",
+        "disponivel": true,
+        "preco_centavos": 1914999,
+        "preco_tabela_centavos": 2252940
+      },
+      {
+        "sku": "40183",
+        "disponivel": true,
+        "preco_centavos": 2289999,
+        "preco_tabela_centavos": 2694116
+      },
+      {
+        "sku": "40187",
+        "disponivel": true,
+        "preco_centavos": 2089999,
+        "preco_tabela_centavos": 2458822
+      },
+      {
+        "sku": "40189",
+        "disponivel": true,
+        "preco_centavos": 3069999,
+        "preco_tabela_centavos": 3611764
+      },
+      {
+        "sku": "40191",
+        "disponivel": true,
+        "preco_centavos": 5805999,
+        "preco_tabela_centavos": 6830587
+      },
+      {
+        "sku": "40193",
+        "disponivel": true,
+        "preco_centavos": 4319999,
+        "preco_tabela_centavos": 5082352
+      },
+      {
+        "sku": "40200",
+        "disponivel": true,
+        "preco_centavos": 7269999,
+        "preco_tabela_centavos": 8552940
+      },
+      {
+        "sku": "40204",
+        "disponivel": true,
+        "preco_centavos": 6991999,
+        "preco_tabela_centavos": 8225881
+      },
+      {
+        "sku": "40205",
+        "disponivel": true,
+        "preco_centavos": 11299999,
+        "preco_tabela_centavos": 13294116
+      },
+      {
+        "sku": "23531",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25051",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25487",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "28455",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "28699",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "34286",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "34853",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "34855",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "34857",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "34858",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "34861",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "34863",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "34867",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "35339",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "35809",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "36043",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "36435",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "36448",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "36451",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "36455",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "36467",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "36468",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "36483",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "36523",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "36694",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "37429",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "37443",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "37661",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "37720",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "38429",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "38975",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "38981",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "39071",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "39653",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "40176",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "40179",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "40196",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "40208",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "12753",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "13554",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "13652",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "13780",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "13792",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "14362",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "14363",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "14473",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "14800",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "15307",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "15814",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "15892",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "16103",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "16104",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "16229",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "16231",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "16232",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "16355",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "16356",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "16455",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "16456",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "16457",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "16461",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "16462",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "16525",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "16536",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "16617",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "16658",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "16660",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "16678",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "17007",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "17008",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "17093",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "17203",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "17248",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "17251",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "17268",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "17365",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "17521",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "17590",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "18648",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19118",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19123",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19124",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19127",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19128",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19129",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19135",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19211",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19226",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19228",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19230",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19232",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19400",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19408",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19424",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19577",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19590",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19635",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19699",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19715",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19750",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19808",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19810",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19911",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "19956",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "20221",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "20236",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "20238",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "20240",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "20241",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "20243",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "20244",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "20245",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "20246",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "20247",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "20257",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "20438",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "20487",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "21279",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "21297",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "22043",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "22046",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "22865",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23276",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23277",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23342",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23343",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23368",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23388",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23391",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23522",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23524",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23525",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23527",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23539",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23540",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23555",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23601",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23602",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23649",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23650",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23651",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23786",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23787",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23788",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23789",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "23790",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "24168",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "24169",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "24170",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "24171",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "24173",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "24174",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "24176",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "24178",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "24183",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "24355",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "24357",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "24384",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "24390",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "24391",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "24392",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "24479",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "24535",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "24538",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25052",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25053",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25059",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25099",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25190",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25191",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25192",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25194",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25224",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25228",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25231",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25232",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25234",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25235",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25236",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25238",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25273",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25332",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25333",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25334",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25339",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25369",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25373",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25374",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25375",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25379",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25404",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25406",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25407",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25408",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25409",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25438",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25439",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25441",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25446",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25447",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25448",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25449",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25450",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25451",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      },
+      {
+        "sku": "25453",
+        "disponivel": false,
+        "preco_centavos": null,
+        "preco_tabela_centavos": null
+      }
+    ]
   }
 }

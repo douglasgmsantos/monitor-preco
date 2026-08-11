@@ -3,7 +3,8 @@
 import pytest
 
 from coletor.parser import (
-    ResultadoExtracao, extrair_lista, extrair_preco, normalizar_para_centavos,
+    ResultadoExtracao, SeletoresDeListagem, extrair_lista, extrair_lista_dom,
+    extrair_preco, normalizar_para_centavos,
 )
 from conftest import carregar_gabarito, gabarito_disponivel, ler_fixture
 
@@ -461,3 +462,107 @@ def test_listagem_real_bate_com_o_gabarito():
     assert obtido == esperado
     assert all(i.url and i.url.startswith("https://") for i in itens)
     assert all(i.disponivel is None for i in itens)   # listagem não traz estoque
+
+
+# --- Listagem por seletores de DOM (lojas sem JSON-LD) -----------------------
+
+SELETORES_TESTE = SeletoresDeListagem(
+    item="div.card",
+    nome="a.nome",
+    nome_atributo="title",
+    url="a.nome",
+    preco=".preco-novo span",
+    preco_tabela=".preco-velho del span",
+)
+
+
+def cartao(sku, nome, preco, tabela=None):
+    velho = f'<div class="preco-velho"><del>De: <span>{tabela}</span></del> por:</div>' if tabela else ""
+    return (
+        f'<div class="card">'
+        f'<a class="nome" href="/produto/{sku}/slug" title="{nome}"><h2>{nome}</h2></a>'
+        f'{velho}<div class="preco-novo"><span>{preco}</span> <small>à vista no Pix</small></div>'
+        f"</div>"
+    )
+
+
+def pagina_dom(*cartoes):
+    return "<html><body>" + "".join(cartoes) + "</body></html>"
+
+
+BASE = "https://loja.example/busca?str=x"
+
+
+def test_dom_extrai_nome_url_e_os_dois_precos():
+    html = pagina_dom(cartao("28714", "Placa PCYES RX 550", "R$ 589,90", "R$ 694,00"))
+    (item,) = extrair_lista_dom(html, SELETORES_TESTE, base_url=BASE)
+
+    assert item.sku == "28714"
+    assert item.nome == "Placa PCYES RX 550"
+    assert item.url == "https://loja.example/produto/28714/slug"
+    assert item.preco_centavos == 58990          # o de VENDA
+    assert item.preco_tabela_centavos == 69400   # o "de" riscado
+    assert item.disponivel is True
+
+
+def test_dom_ignora_sujeira_depois_do_valor():
+    """O texto vem como 'R$ 589,90à vista no Pix'."""
+    html = pagina_dom(cartao("1", "X", "R$ 1.299,90à vista no Pix"))
+    assert extrair_lista_dom(html, SELETORES_TESTE, base_url=BASE)[0].preco_centavos == 129990
+
+
+@pytest.mark.parametrize("marcador", ["Indisponível", "ESGOTADO", "Sem estoque", "Avise-me"])
+def test_dom_reconhece_produto_esgotado(marcador):
+    html = pagina_dom(cartao("1", "X", marcador))
+    (item,) = extrair_lista_dom(html, SELETORES_TESTE, base_url=BASE)
+
+    assert item.disponivel is False
+    assert item.preco_centavos is None
+    assert item.preco_tabela_centavos is None
+
+
+def test_dom_absolutiza_url_relativa():
+    html = pagina_dom(cartao("1", "X", "R$ 10,00"))
+    assert extrair_lista_dom(html, SELETORES_TESTE, base_url=BASE)[0].url.startswith(
+        "https://loja.example/"
+    )
+
+
+def test_dom_deduplica_o_mesmo_sku():
+    html = pagina_dom(cartao("1", "X", "R$ 10,00"), cartao("1", "X", "R$ 10,00"))
+    assert len(extrair_lista_dom(html, SELETORES_TESTE, base_url=BASE)) == 1
+
+
+def test_dom_descarta_cartao_sem_preco_nem_marcador():
+    html = pagina_dom(
+        '<div class="card"><a class="nome" href="/produto/9/x" title="Y"></a>'
+        '<div class="preco-novo"><span>consulte o vendedor</span></div></div>'
+    )
+    assert extrair_lista_dom(html, SELETORES_TESTE, base_url=BASE) == []
+
+
+@pytest.mark.skipif(not gabarito_disponivel(), reason="gabarito não fornecido")
+def test_listagem_por_dom_bate_com_o_gabarito():
+    gabarito = carregar_gabarito().get("listagem_b.html")
+    if gabarito is None:
+        pytest.skip("gabarito de listagem por DOM ausente")
+
+    from coletor.raspagem import SELETORES_TERABYTE
+
+    itens = extrair_lista_dom(
+        ler_fixture("listagem_b.html"), SELETORES_TERABYTE, base_url=gabarito["url"]
+    )
+
+    assert len(itens) == gabarito["quantidade"]
+    obtido = {i.sku: (i.preco_centavos, i.disponivel, i.preco_tabela_centavos) for i in itens}
+    esperado = {
+        g["sku"]: (g["preco_centavos"], g["disponivel"], g["preco_tabela_centavos"])
+        for g in gabarito["itens"]
+    }
+    assert obtido == esperado
+    assert sum(1 for i in itens if i.disponivel) == gabarito["disponiveis"]
+    # onde a loja publica os dois, o de venda nunca é maior que o de tabela
+    assert all(
+        i.preco_centavos <= i.preco_tabela_centavos
+        for i in itens if i.preco_centavos and i.preco_tabela_centavos
+    )

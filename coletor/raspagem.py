@@ -23,13 +23,64 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 
 from coletor.coleta import LimitadorPorHost, buscar_html
-from coletor.parser import ItemDeLista, extrair_lista
+from coletor.parser import (
+    ItemDeLista, SeletoresDeListagem, extrair_lista, extrair_lista_dom,
+)
 
 logger = logging.getLogger(__name__)
 
 # A KaBuM ignora page_size e devolve 10 por página. Não há como pedir mais.
 PAGINAS_MAXIMAS = 40
 PARAMETRO_DE_PAGINA = "page_number"
+
+# ---------------------------------------------------------------------------
+# Registro de lojas
+#
+# Duas estratégias de extração, escolhidas por medição e não por preferência:
+#
+#   JSON-LD  — contrato estável (schema.org), mas a loja precisa publicar.
+#   DOM      — funciona onde não há JSON-LD, ao custo de depender do layout.
+#              Os seletores são DADOS: quando a loja muda o HTML, conserta-se
+#              esta tabela e o teste com fixture congelada avisa alto.
+#
+# `preco_confiavel` registra um fato medido em 2026-08-10: o preço da listagem
+# da KaBuM é o de TABELA, de 10% a 31% acima do preço da página do produto. O
+# do Terabyte é o de venda, porque a loja publica os dois.
+# ---------------------------------------------------------------------------
+
+SELETORES_TERABYTE = SeletoresDeListagem(
+    item="div.product-item",
+    nome="a.product-item__name",
+    nome_atributo="title",
+    url="a.product-item__name",
+    preco=".product-item__new-price span",
+    preco_tabela=".product-item__old-price del span",
+)
+
+
+@dataclass(frozen=True)
+class Loja:
+    host: str
+    seletores: SeletoresDeListagem | None   # None = extrair do JSON-LD
+    preco_confiavel: bool
+    itens_por_pagina: int
+
+
+LOJAS = {
+    "kabum.com.br": Loja("kabum.com.br", None, preco_confiavel=False, itens_por_pagina=10),
+    "terabyteshop.com.br": Loja(
+        "terabyteshop.com.br", SELETORES_TERABYTE,
+        preco_confiavel=True, itens_por_pagina=300,
+    ),
+}
+
+
+def loja_de(host: str) -> Loja | None:
+    host = host.lower().replace("www.", "")
+    for chave, loja in LOJAS.items():
+        if host == chave or host.endswith("." + chave):
+            return loja
+    return None
 
 
 @dataclass(frozen=True)
@@ -90,11 +141,16 @@ async def raspar_categoria(
             logger.warning("página %d de %s falhou: %s", pagina, categoria.nome, erro)
             break
 
-        novos = [
-            item
-            for item in extrair_lista(html or "", teto_centavos=teto_centavos)
-            if item.sku and item.sku not in vistos
-        ]
+        loja = loja_de(categoria.loja)
+        if loja is not None and loja.seletores is not None:
+            achados = extrair_lista_dom(
+                html or "", loja.seletores,
+                base_url=endereco, teto_centavos=teto_centavos,
+            )
+        else:
+            achados = extrair_lista(html or "", teto_centavos=teto_centavos)
+
+        novos = [i for i in achados if i.sku and i.sku not in vistos]
         if not novos:
             logger.info(
                 "categoria %s terminou na página %d (%d itens)",
