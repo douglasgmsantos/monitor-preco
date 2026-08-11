@@ -578,8 +578,9 @@ def test_preco_igual_nao_reescreve(repositorio):
 
     resumo = repositorio.salvar_catalogo("kabum.com.br", "placas", itens)
 
-    assert resumo == {"novos": 0, "alterados": 0, "inalterados": 2,
-                      "esgotados": 0, "sem_sku": 0}
+    assert resumo["novos"] == 0
+    assert resumo["alterados"] == 0
+    assert resumo["inalterados"] == 2
 
 
 def test_preco_alterado_e_contabilizado(repositorio):
@@ -602,17 +603,16 @@ def test_item_sem_sku_ou_sem_preco_e_descartado(repositorio):
     assert repositorio.ler_indice_do_catalogo("kabum.com.br", "placas") == {"3": (300_000, None)}
 
 
-def test_item_que_sumiu_da_listagem_sai_do_indice(repositorio):
+def test_item_que_sumiu_de_uma_raspagem_permanece(repositorio):
+    """Comportamento DELIBERADO, trocado depois de medir instabilidade nas
+    listagens: sumir de uma raspagem não é sinal de que o produto acabou."""
     repositorio.salvar_catalogo(
         "kabum.com.br", "placas", [item("1", 100_000), item("2", 200_000)]
     )
 
     repositorio.salvar_catalogo("kabum.com.br", "placas", [item("1", 100_000)])
 
-    # o índice reflete a listagem atual...
-    assert repositorio.ler_indice_do_catalogo("kabum.com.br", "placas") == {"1": (100_000, None)}
-    # ...mas o documento do item sai de circulação sem ser apagado, para não
-    # quebrar quem já favoritou o produto
+    assert set(repositorio.ler_indice_do_catalogo("kabum.com.br", "placas")) == {"1", "2"}
     assert {i["sku"] for i in repositorio.listar_catalogo("kabum.com.br", "placas")} == {"1", "2"}
 
 
@@ -651,7 +651,7 @@ def test_vitrine_serve_o_catalogo_em_uma_leitura(repositorio):
     assert vitrine["1"]["p"] == 100_000
     assert vitrine["1"]["u"].startswith("https://")
     # chaves curtas: o nome do campo é cobrado em cada entrada
-    assert set(vitrine["1"]) == {"n", "u", "p", "d", "t"}
+    assert set(vitrine["1"]) == {"n", "u", "p", "d", "t", "vt"}
 
 
 def test_documento_da_loja_permite_descobrir_lojas(repositorio):
@@ -702,3 +702,48 @@ def test_preco_de_tabela_e_guardado_separado(repositorio):
     vitrine = repositorio.ler_vitrine("terabyteshop.com.br", "placas")
     assert vitrine["1"]["p"] == 58_990   # o de venda
     assert vitrine["1"]["t"] == 69_400   # o "de" riscado
+
+
+def test_raspagem_curta_nao_apaga_o_catalogo(repositorio):
+    """A renderização das listagens é instável: a mesma categoria devolveu 47
+    itens numa requisição e 25 na seguinte. Reescrever com o que veio agora
+    apagaria produtos que continuam à venda."""
+    repositorio.salvar_catalogo(
+        "terabyteshop.com.br", "ssd",
+        [item("1", 100_000), item("2", 200_000), item("3", 300_000)],
+    )
+
+    resumo = repositorio.salvar_catalogo("terabyteshop.com.br", "ssd", [item("1", 100_000)])
+
+    assert resumo["mantidos"] == 2      # os dois que não vieram
+    assert resumo["expirados"] == 0
+    assert set(repositorio.ler_vitrine("terabyteshop.com.br", "ssd")) == {"1", "2", "3"}
+
+
+def test_item_sumido_por_tempo_demais_sai_da_vitrine(repositorio):
+    antigo = datetime.now(timezone.utc) - timedelta(days=10)
+    repositorio.salvar_catalogo(
+        "terabyteshop.com.br", "ssd", [item("1", 100_000), item("2", 200_000)],
+        agora=antigo,
+    )
+
+    resumo = repositorio.salvar_catalogo("terabyteshop.com.br", "ssd", [item("1", 100_000)])
+
+    assert resumo["expirados"] == 1
+    assert set(repositorio.ler_vitrine("terabyteshop.com.br", "ssd")) == {"1"}
+
+
+def test_item_visto_de_novo_renova_o_prazo(repositorio):
+    antigo = datetime.now(timezone.utc) - timedelta(days=10)
+    repositorio.salvar_catalogo(
+        "terabyteshop.com.br", "ssd", [item("1", 100_000), item("2", 200_000)],
+        agora=antigo,
+    )
+
+    # ambos aparecem de novo: nenhum expira
+    resumo = repositorio.salvar_catalogo(
+        "terabyteshop.com.br", "ssd", [item("1", 100_000), item("2", 200_000)]
+    )
+
+    assert resumo["expirados"] == 0
+    assert set(repositorio.ler_vitrine("terabyteshop.com.br", "ssd")) == {"1", "2"}

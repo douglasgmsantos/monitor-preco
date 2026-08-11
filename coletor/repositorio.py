@@ -44,6 +44,15 @@ COLECAO_INDICE = "indice"
 
 LIMITE_DO_LOTE = 450  # o Firestore aceita 500 operações; margem de segurança
 
+# Quantos dias um item sobrevive na vitrine sem ser visto de novo.
+#
+# Existe porque a renderização das listagens é INSTÁVEL: a mesma categoria do
+# Terabyte devolveu 47 itens numa requisição e 25 na seguinte. Reescrever a
+# vitrine com o que veio agora apagaria produtos que continuam à venda. Então a
+# vitrine ACUMULA, e um item só sai depois de sumir por vários dias seguidos —
+# que é o sinal de que ele foi mesmo descontinuado.
+DIAS_NA_VITRINE = 7
+
 STATUS_PENDENTE = "pendente"
 STATUS_OK = "ok"
 STATUS_INVALIDA = "invalida"
@@ -469,9 +478,11 @@ class Repositorio:
 
         resumo = {
             "novos": 0, "alterados": 0, "inalterados": 0,
-            "esgotados": 0, "sem_sku": 0,
+            "esgotados": 0, "sem_sku": 0, "mantidos": 0, "expirados": 0,
         }
-        vitrine: dict[str, dict] = {}
+        # Começa do que já existia: a listagem pode ter rendido menos desta vez.
+        vitrine: dict[str, dict] = dict(self.ler_vitrine(loja, categoria))
+        vistos_agora: set[str] = set()
         pendentes = []
 
         for item in itens:
@@ -485,14 +496,15 @@ class Repositorio:
             if item.disponivel is False:
                 resumo["esgotados"] += 1
 
-            entrada = {
+            vitrine[item.sku] = {
                 "n": item.nome,
                 "u": item.url,
                 "p": item.preco_centavos,
                 "d": item.disponivel,
                 "t": item.preco_tabela_centavos,
+                "vt": agora,     # visto nesta raspagem
             }
-            vitrine[item.sku] = entrada
+            vistos_agora.add(item.sku)
             antes = anterior.get(item.sku)
             # sair de estoque é mudança tanto quanto mudar de preço
             if antes is not None and antes == (item.preco_centavos, item.disponivel):
@@ -521,6 +533,22 @@ class Repositorio:
             for referencia, dados in pendentes[inicio : inicio + LIMITE_DO_LOTE]:
                 lote.set(referencia, dados, merge=True)
             lote.commit()
+
+        # Quem não apareceu agora sobrevive até DIAS_NA_VITRINE sem ser visto.
+        limite = agora - timedelta(days=DIAS_NA_VITRINE)
+        for sku in [s for s in vitrine if s not in vistos_agora]:
+            visto = vitrine[sku].get("vt")
+            if visto is None:
+                vitrine[sku]["vt"] = agora     # entrada antiga, sem marca de tempo
+                resumo["mantidos"] += 1
+                continue
+            if getattr(visto, "tzinfo", None) is None:
+                visto = visto.replace(tzinfo=timezone.utc)
+            if visto < limite:
+                del vitrine[sku]
+                resumo["expirados"] += 1
+            else:
+                resumo["mantidos"] += 1
 
         self._ref_indice(loja, categoria).set(
             {
