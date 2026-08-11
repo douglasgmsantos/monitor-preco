@@ -27,6 +27,7 @@ let produtos = [];              // {id, dados, fontes:[]}
 let idSelecionado = null;
 let modoEdicao = null;          // id do produto em edição, ou null para criação
 let periodo = "1m";
+let escala = "reais";   // "reais" | "indice"
 let grafico = null;
 let dadosDoGrafico = null;      // {rotulos, series:[{nome, cor, valores}]}
 let cancelarProdutos = null;
@@ -557,7 +558,7 @@ function observarProdutos() {
       }
       renderizarLista();
       renderizarCatalogo();
-      carregarHistorico();
+      agendarHistorico();
     },
     (erro) => console.error("falha ao observar produtos", erro),
   );
@@ -575,7 +576,7 @@ function observarFontes(produtoId) {
         .sort((a, b) => (a.id < b.id ? -1 : 1));
       renderizarLista();
       renderizarCatalogo();
-      if (produtoId === idSelecionado) carregarHistorico();
+      agendarHistorico();   // qualquer fonte afeta o gráfico agora
     },
     (erro) => console.error("falha ao observar fontes", erro),
   );
@@ -715,7 +716,7 @@ function renderizarLista() {
       if (evento.target.closest(".acoes, .remover-fonte, .tentar-fonte")) return;
       idSelecionado = produto.id;
       renderizarLista();
-      carregarHistorico();
+      desenhar();   // só muda o destaque; não precisa reler o Firestore
     });
     lista.appendChild(cartao);
   }
@@ -949,6 +950,16 @@ function acompanharDoCatalogo(sku) {
   });
 });
 
+document.querySelectorAll(".periodos button[data-escala]").forEach((botao) => {
+  botao.addEventListener("click", () => {
+    escala = botao.dataset.escala;
+    document.querySelectorAll(".periodos button[data-escala]").forEach((b) =>
+      b.setAttribute("aria-pressed", String(b === botao)));
+    desenhar();
+    renderizarTabela();
+  });
+});
+
 function irParaPagina(delta) {
   paginaCatalogo += delta;
   renderizarCatalogo();
@@ -975,7 +986,7 @@ function ligarSeletorDePeriodo() {
       periodo = botao.dataset.periodo;
       document.querySelectorAll(".periodos button").forEach((b) =>
         b.setAttribute("aria-pressed", String(b === botao)));
-      carregarHistorico();
+      agendarHistorico();
     });
   });
 }
@@ -1032,58 +1043,80 @@ async function serieDiaria(produtoId, fonte, dias) {
 
 const DIAS_POR_PERIODO = { "1s": 7, "1m": 30, "1a": 365 };
 
+let temporizadorHistorico = null;
+
+/** Coalesce recargas: cada produto e cada fonte tem seu próprio listener, e
+ *  sem isso a entrada no app dispararia uma recarga completa por snapshot. */
+function agendarHistorico() {
+  clearTimeout(temporizadorHistorico);
+  temporizadorHistorico = setTimeout(() => carregarHistorico(), 300);
+}
+
 async function carregarHistorico() {
-  const produto = produtos.find((p) => p.id === idSelecionado);
-  if (!produto) { dadosDoGrafico = null; desenhar(); return; }
+  const rastreados = produtos.slice(0, MAX_SERIES);
+  const excedente = produtos.length - rastreados.length;
 
-  $("tituloGrafico").textContent = `Histórico — ${produto.dados.nome}`;
+  $("tituloGrafico").textContent =
+    `Histórico — ${rastreados.length} produto(s) acompanhado(s)` +
+    (excedente > 0 ? ` (${excedente} fora do gráfico: a paleta tem ${MAX_SERIES} cores)` : "");
+
+  if (!rastreados.length) { dadosDoGrafico = null; desenhar(); return; }
+
   const cores = tokens().series;
-  const fontes = produto.fontes.filter((f) => f.status === "ok").slice(0, MAX_SERIES);
+  const eixoTempo = new Map();
+  const porProduto = [];
 
-  const series = [];
-  const eixoTempo = new Map();  // rótulo -> instante, para ordenar
-  for (let indice = 0; indice < fontes.length; indice++) {
-    const fonte = fontes[indice];
-    const pontos = periodo === "1d"
-      ? await serie1d(produto.id, fonte)
-      : await serieDiaria(produto.id, fonte, DIAS_POR_PERIODO[periodo]);
+  for (let indice = 0; indice < rastreados.length; indice++) {
+    const produto = rastreados[indice];
+    const fontes = produto.fontes.filter((f) => f.status === "ok");
 
-    for (const ponto of pontos) {
-      const rotulo = periodo === "1d"
-        ? ponto.quando.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
-        : ponto.quando.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
-      if (!eixoTempo.has(rotulo)) eixoTempo.set(rotulo, ponto.quando);
+    // Uma série por PRODUTO. O valor é o MENOR entre as fontes naquele
+    // instante — a mesma regra que a máquina de estados usa para decidir
+    // alerta, para o gráfico não contar uma história diferente da mensagem.
+    const menorPorRotulo = new Map();
+    for (const fonte of fontes) {
+      const pontos = periodo === "1d"
+        ? await serie1d(produto.id, fonte)
+        : await serieDiaria(produto.id, fonte, DIAS_POR_PERIODO[periodo]);
+
+      for (const ponto of pontos) {
+        const rotulo = formatoRotulo(ponto.quando);
+        if (!eixoTempo.has(rotulo)) eixoTempo.set(rotulo, ponto.quando);
+        const atual = menorPorRotulo.get(rotulo);
+        if (atual === undefined || ponto.centavos < atual) {
+          menorPorRotulo.set(rotulo, ponto.centavos);
+        }
+      }
     }
-    series.push({
-      nome: fonte.loja,
-      // cor pela posição estável da fonte, nunca pelo rank do preço
+    porProduto.push({
+      id: produto.id,
+      nome: produto.dados.nome,
+      // cor pela posição estável do produto, nunca pelo rank do preço
       cor: cores[indice % MAX_SERIES],
-      pontos,
+      porRotulo: menorPorRotulo,
     });
   }
 
-  const rotulos = [...eixoTempo.entries()]
-    .sort((a, b) => a[1] - b[1])
-    .map(([rotulo]) => rotulo);
-
-  const formatoRotulo = (quando) => periodo === "1d"
-    ? quando.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
-    : quando.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+  const rotulos = [...eixoTempo.entries()].sort((a, b) => a[1] - b[1]).map(([r]) => r);
 
   dadosDoGrafico = {
     rotulos,
-    series: series.map((serie) => {
-      const porRotulo = new Map(serie.pontos.map((p) => [formatoRotulo(p.quando), p.centavos]));
-      return {
-        nome: serie.nome,
-        cor: serie.cor,
-        valores: rotulos.map((r) => (porRotulo.has(r) ? porRotulo.get(r) : null)),
-      };
-    }),
+    series: porProduto.map((s) => ({
+      id: s.id,
+      nome: s.nome,
+      cor: s.cor,
+      valores: rotulos.map((r) => (s.porRotulo.has(r) ? s.porRotulo.get(r) : null)),
+    })),
   };
 
   desenhar();
   renderizarTabela();
+}
+
+function formatoRotulo(quando) {
+  return periodo === "1d"
+    ? quando.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+    : quando.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
 }
 
 // ---------------------------------------------------------------------------
@@ -1132,7 +1165,7 @@ const pluginRotuloDePonta = {
         }
       }
       if (!ultimo) return;
-      const texto = formatarBRL(conjunto.data[indiceDoUltimo]);
+      const texto = formatarValorDoEixo(conjunto.data[indiceDoUltimo]);
       const largura = ctx.measureText(texto).width;
       let x = ultimo.x + 8;
       if (x + largura > gr.chartArea.right) x = ultimo.x - largura - 8;
@@ -1143,6 +1176,27 @@ const pluginRotuloDePonta = {
     ctx.restore();
   },
 };
+
+/**
+ * Produtos de faixas de preço muito diferentes no mesmo eixo tornam os baratos
+ * invisíveis. Indexar cada série ao próprio primeiro ponto (=100) põe todas na
+ * mesma escala e mostra o que interessa quando se compara: quem caiu mais.
+ *
+ * Isto NÃO é o caminho do dinheiro — é um percentual derivado, só para desenho.
+ * Os centavos continuam intactos em `dadosDoGrafico`.
+ */
+function valoresNaEscala(serie) {
+  if (escala === "reais") return serie.valores;
+  const base = serie.valores.find((v) => v !== null && v > 0);
+  if (!base) return serie.valores.map(() => null);
+  return serie.valores.map((v) => (v === null ? null : (v * 100) / base));
+}
+
+function formatarValorDoEixo(valor) {
+  return escala === "reais"
+    ? formatarBRL(valor)
+    : `${valor >= 100 ? "+" : ""}${(valor - 100).toFixed(1)}%`;
+}
 
 function desenhar() {
   const t = tokens();
@@ -1161,10 +1215,12 @@ function desenhar() {
       labels: dadosDoGrafico.rotulos,
       datasets: dadosDoGrafico.series.map((serie) => ({
         label: serie.nome,
-        data: serie.valores,
+        data: valoresNaEscala(serie),
         borderColor: serie.cor,
         backgroundColor: serie.cor,
-        borderWidth: 2,               // marca fina
+        // destaque avaliado no DESENHO: clicar num cartão não pode exigir
+        // uma nova leitura do Firestore só para engrossar uma linha
+        borderWidth: serie.id === idSelecionado ? 3 : 2,
         pointRadius: denso ? 0 : 4,   // 8px de diâmetro quando visível
         pointHoverRadius: 5,
         pointBorderColor: t.superficie,
@@ -1195,7 +1251,15 @@ function desenhar() {
           padding: 10,
           displayColors: true,
           callbacks: {
-            label: (ctx) => ` ${ctx.dataset.label}: ${formatarBRL(ctx.parsed.y)}`,
+            // o tooltip mostra sempre o valor em reais, mesmo na escala
+            // indexada: o percentual diz o movimento, o real diz o preço
+            label: (ctx) => {
+              const centavos = dadosDoGrafico.series[ctx.datasetIndex].valores[ctx.dataIndex];
+              const emReais = formatarBRL(centavos);
+              return escala === "reais"
+                ? ` ${ctx.dataset.label}: ${emReais}`
+                : ` ${ctx.dataset.label}: ${formatarValorDoEixo(ctx.parsed.y)} (${emReais})`;
+            },
           },
         },
         fioVertical: { cor: t.eixo },
@@ -1215,7 +1279,7 @@ function desenhar() {
           border: { display: false },
           ticks: {
             color: t.fraca, font: { size: 11 },
-            callback: (valor) => formatarBRL(valor),
+            callback: (valor) => formatarValorDoEixo(valor),
           },
         },
       },
