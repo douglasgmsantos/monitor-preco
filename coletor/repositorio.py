@@ -31,6 +31,18 @@ COLECAO_DIARIO = "diario"
 # coleta pertence ao coletor, não a cada usuário.
 COLECAO_SISTEMA = "sistema"
 DOC_CONTROLE = "controle"
+DOC_CONTROLE_RASPAGEM = "controle_raspagem"
+
+# Catálogo: global, não por usuário. Escrito só pelo Admin SDK, lido por
+# qualquer usuário autenticado. Guarda apenas o INSTANTÂNEO — o preço da
+# listagem é o "de" (tabela), 10% a 31% acima do preço real da página do
+# produto, então ele não serve para histórico nem para alerta. A série de
+# verdade começa quando o usuário favorita, e vem da página do produto.
+COLECAO_CATALOGO = "catalogo"
+COLECAO_ITENS = "itens"
+COLECAO_INDICE = "indice"
+
+LIMITE_DO_LOTE = 450  # o Firestore aceita 500 operações; margem de segurança
 
 STATUS_PENDENTE = "pendente"
 STATUS_OK = "ok"
@@ -398,7 +410,120 @@ class Repositorio:
             atualizacao["ultimoPrecoAlertadoCentavos"] = preco_centavos
         produto.ref.update(atualizacao)
 
+    # --- catálogo -----------------------------------------------------------
+
+    def ler_indice_do_catalogo(self, loja: str, categoria: str) -> dict[str, int]:
+        """Mapa {sku: precoTabelaCentavos} da última raspagem.
+
+        Uma leitura por categoria em vez de uma por produto: é a mesma jogada
+        do bucketing. Com 1.000 itens o documento fica em ~30 KB, contra o
+        limite de 1 MB.
+        """
+        snapshot = (
+            self._db.collection(COLECAO_CATALOGO)
+            .document(loja)
+            .collection(COLECAO_INDICE)
+            .document(categoria)
+            .get()
+        )
+        if not snapshot.exists:
+            return {}
+        return (snapshot.to_dict() or {}).get("precos") or {}
+
+    def salvar_catalogo(
+        self, loja: str, categoria: str, itens, agora: datetime | None = None
+    ) -> dict:
+        """Grava o instantâneo da categoria e devolve o que mudou.
+
+        Só escreve o documento do item quando ele é novo ou o preço mudou —
+        reescrever 1.000 itens inalterados a cada ciclo seria puro desperdício
+        de cota.
+        """
+        agora = agora or datetime.now(timezone.utc)
+        anterior = self.ler_indice_do_catalogo(loja, categoria)
+
+        colecao = (
+            self._db.collection(COLECAO_CATALOGO)
+            .document(loja)
+            .collection(COLECAO_ITENS)
+        )
+
+        resumo = {"novos": 0, "alterados": 0, "inalterados": 0, "sem_sku": 0}
+        precos: dict[str, int] = {}
+        pendentes = []
+
+        for item in itens:
+            if not item.sku or item.preco_centavos is None:
+                resumo["sem_sku"] += 1
+                continue
+            precos[item.sku] = item.preco_centavos
+            antes = anterior.get(item.sku)
+            if antes == item.preco_centavos:
+                resumo["inalterados"] += 1
+                continue
+            resumo["novos" if antes is None else "alterados"] += 1
+            pendentes.append(
+                (
+                    colecao.document(item.sku),
+                    {
+                        "sku": item.sku,
+                        "nome": item.nome,
+                        "url": item.url,
+                        "categoria": categoria,
+                        "loja": loja,
+                        # o nome do campo diz que NÃO é o preço de venda
+                        "precoTabelaCentavos": item.preco_centavos,
+                        "atualizadoEm": agora,
+                    },
+                )
+            )
+
+        for inicio in range(0, len(pendentes), LIMITE_DO_LOTE):
+            lote = self._db.batch()
+            for referencia, dados in pendentes[inicio : inicio + LIMITE_DO_LOTE]:
+                lote.set(referencia, dados, merge=True)
+            lote.commit()
+
+        self._db.collection(COLECAO_CATALOGO).document(loja).collection(
+            COLECAO_INDICE
+        ).document(categoria).set(
+            {
+                "categoria": categoria,
+                "loja": loja,
+                "precos": precos,
+                "quantidade": len(precos),
+                "atualizadoEm": agora,
+            }
+        )
+        return resumo
+
+    def listar_catalogo(self, loja: str, categoria: str | None = None) -> list[dict]:
+        """Itens do catálogo. Existe para teste e depuração; o front lê direto."""
+        consulta = (
+            self._db.collection(COLECAO_CATALOGO)
+            .document(loja)
+            .collection(COLECAO_ITENS)
+        )
+        if categoria is not None:
+            consulta = consulta.where(
+                filter=firestore.FieldFilter("categoria", "==", categoria)
+            )
+        return [s.to_dict() for s in consulta.stream()]
+
     # --- controle de cadência ---------------------------------------------
+
+    def ler_controle_raspagem(self) -> datetime | None:
+        snapshot = (
+            self._db.collection(COLECAO_SISTEMA).document(DOC_CONTROLE_RASPAGEM).get()
+        )
+        if not snapshot.exists:
+            return None
+        return (snapshot.to_dict() or {}).get("ultimaRaspagemEm")
+
+    def gravar_controle_raspagem(self, agora: datetime) -> None:
+        self._db.collection(COLECAO_SISTEMA).document(DOC_CONTROLE_RASPAGEM).set(
+            {"ultimaRaspagemEm": agora}, merge=True
+        )
 
     def ler_controle(self) -> datetime | None:
         snapshot = (

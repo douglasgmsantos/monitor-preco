@@ -85,6 +85,19 @@ service cloud.firestore {
       match /sistema/{docId} { allow read: if ehDono(uid); allow write: if false; }
     }
 
+    // Catálogo: global e compartilhado. Qualquer usuário autenticado lê para
+    // navegar e favoritar; escrever é exclusividade do coletor (Admin SDK).
+    // Não há dado pessoal aqui — é o que a loja já publica na vitrine.
+    match /catalogo/{loja} {
+      allow read: if request.auth != null;
+      allow write: if false;
+
+      match /{documento=**} {
+        allow read: if request.auth != null;
+        allow write: if false;
+      }
+    }
+
     match /{document=**} { allow read, write: if false; }
   }
 }

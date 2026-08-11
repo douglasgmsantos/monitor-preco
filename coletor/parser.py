@@ -14,6 +14,7 @@ import logging
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from selectolax.parser import HTMLParser
 
@@ -51,6 +52,22 @@ class ResultadoExtracao:
     disponivel: bool
     origem: Literal["j", "g", "m"] | None
     erro: str | None  # preenchido apenas quando preco_centavos is None
+
+
+@dataclass(frozen=True)
+class ItemDeLista:
+    """Um produto encontrado numa página de LISTAGEM (categoria ou busca).
+
+    `disponivel` é `None` de propósito: listagens não publicam `availability`.
+    Afirmar True seria inventar estoque — quem precisa dessa informação abre a
+    página do produto.
+    """
+
+    sku: str | None
+    nome: str | None
+    url: str | None
+    preco_centavos: int | None
+    disponivel: bool | None
 
 
 # ----------------------------------------------------------------------------
@@ -314,6 +331,111 @@ def _primeiro_produto(documento: Any) -> dict | None:
             achado = _primeiro_produto(item)
             if achado is not None:
                 return achado
+    return None
+
+
+def _todos_os_produtos(documento: Any, achados: list[dict] | None = None) -> list[dict]:
+    """Todos os nós de produto, na ordem do documento.
+
+    Irmão de `_primeiro_produto`: a página de produto quer o primeiro, a de
+    listagem quer todos.
+    """
+    if achados is None:
+        achados = []
+    if isinstance(documento, dict):
+        if _eh_do_tipo(documento, TIPOS_PRODUTO):
+            achados.append(documento)
+        for valor in documento.values():
+            _todos_os_produtos(valor, achados)
+    elif isinstance(documento, list):
+        for item in documento:
+            _todos_os_produtos(item, achados)
+    return achados
+
+
+def _sku_do_item(produto: dict, url: str | None) -> str | None:
+    """Identificador estável do item.
+
+    Prefere o `sku` declarado; sem ele, usa o último trecho numérico da URL,
+    que é o padrão de loja brasileira (`/produto/725947/slug`).
+    """
+    for campo in ("sku", "mpn", "productID"):
+        valor = produto.get(campo)
+        if isinstance(valor, (str, int)) and str(valor).strip():
+            return str(valor).strip()
+    if not url:
+        return None
+    trechos = [t for t in urlsplit(url).path.split("/") if t]
+    for trecho in reversed(trechos):
+        if trecho.isdigit():
+            return trecho
+    return trechos[-1] if trechos else None
+
+
+def extrair_lista(html: str, *, teto_centavos: int = TETO_CENTAVOS) -> list[ItemDeLista]:
+    """Extrai todos os produtos de uma página de listagem.
+
+    Função pura, como `extrair_preco`. Itens sem preço legível ou em moeda
+    diferente de BRL são descartados — um catálogo com preço errado é pior que
+    um catálogo incompleto.
+    """
+    arvore = HTMLParser(html or "")
+    itens: list[ItemDeLista] = []
+    vistos: set[str] = set()
+
+    for documento in _documentos_jsonld(arvore):
+        for produto in _todos_os_produtos(documento):
+            ofertas = _ofertas_do_produto(produto)
+            if not ofertas:
+                continue
+
+            candidatos = []
+            for oferta in ofertas:
+                centavos, moeda = _valor_da_oferta(oferta, teto_centavos)
+                if centavos is not None:
+                    candidatos.append((centavos, moeda, oferta))
+            if not candidatos:
+                continue
+
+            centavos, moeda, oferta = min(candidatos, key=lambda item: item[0])
+            if moeda is not None and moeda.strip().upper() != MOEDA_ACEITA:
+                logger.warning("item de listagem em moeda %r ignorado", moeda)
+                continue
+
+            url = oferta.get("url") or produto.get("url")
+            url = url.strip() if isinstance(url, str) else None
+            sku = _sku_do_item(produto, url)
+
+            chave = sku or url or ""
+            if chave and chave in vistos:
+                continue      # a mesma página costuma repetir o item em carrosséis
+            if chave:
+                vistos.add(chave)
+
+            nome = produto.get("name")
+            itens.append(
+                ItemDeLista(
+                    sku=sku,
+                    nome=entidades_html.unescape(nome.strip()) if isinstance(nome, str) else None,
+                    url=url,
+                    preco_centavos=centavos,
+                    # listagem não publica availability: desconhecido, não True
+                    disponivel=_disponibilidade_opcional(oferta),
+                )
+            )
+    return itens
+
+
+def _disponibilidade_opcional(oferta: dict) -> bool | None:
+    """Como `_disponibilidade`, mas devolve None quando o campo não existe."""
+    bruto = oferta.get("availability")
+    if not isinstance(bruto, str) or not bruto.strip():
+        return None
+    termo = bruto.strip().rstrip("/").rsplit("/", 1)[-1].strip().lower()
+    if termo in DISPONIBILIDADE_DISPONIVEL:
+        return True
+    if termo in DISPONIBILIDADE_INDISPONIVEL:
+        return False
     return None
 
 

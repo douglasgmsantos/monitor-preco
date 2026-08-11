@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 import pytest
 
-from coletor.parser import ResultadoExtracao
+from coletor.parser import ItemDeLista, ResultadoExtracao
 from coletor.repositorio import (
     STATUS_INVALIDA,
     STATUS_OK,
@@ -543,3 +543,95 @@ def test_media_e_inteira_e_ponderada_pelas_amostras(repositorio, cenario):
 
     assert media == (29 * 100_000 + 2 * 200_000) // 31
     assert isinstance(media, int)
+
+
+# --- catálogo ---------------------------------------------------------------
+
+
+def item(sku, centavos, nome=None):
+    return ItemDeLista(
+        sku=sku, nome=nome or f"Item {sku}",
+        url=f"https://loja.example/produto/{sku}/x",
+        preco_centavos=centavos, disponivel=None,
+    )
+
+
+def test_salvar_catalogo_cria_itens_e_indice(repositorio):
+    resumo = repositorio.salvar_catalogo(
+        "kabum.com.br", "placas", [item("1", 100_000), item("2", 200_000)]
+    )
+
+    assert resumo["novos"] == 2
+    assert resumo["alterados"] == 0
+    indice = repositorio.ler_indice_do_catalogo("kabum.com.br", "placas")
+    assert indice == {"1": 100_000, "2": 200_000}
+
+    itens = {i["sku"]: i for i in repositorio.listar_catalogo("kabum.com.br", "placas")}
+    assert itens["1"]["precoTabelaCentavos"] == 100_000
+    assert isinstance(itens["1"]["precoTabelaCentavos"], int)   # nunca float
+    assert itens["1"]["categoria"] == "placas"
+
+
+def test_preco_igual_nao_reescreve(repositorio):
+    itens = [item("1", 100_000), item("2", 200_000)]
+    repositorio.salvar_catalogo("kabum.com.br", "placas", itens)
+
+    resumo = repositorio.salvar_catalogo("kabum.com.br", "placas", itens)
+
+    assert resumo == {"novos": 0, "alterados": 0, "inalterados": 2, "sem_sku": 0}
+
+
+def test_preco_alterado_e_contabilizado(repositorio):
+    repositorio.salvar_catalogo("kabum.com.br", "placas", [item("1", 100_000)])
+
+    resumo = repositorio.salvar_catalogo("kabum.com.br", "placas", [item("1", 90_000)])
+
+    assert resumo["alterados"] == 1
+    assert repositorio.ler_indice_do_catalogo("kabum.com.br", "placas") == {"1": 90_000}
+
+
+def test_item_sem_sku_ou_sem_preco_e_descartado(repositorio):
+    resumo = repositorio.salvar_catalogo(
+        "kabum.com.br", "placas",
+        [item(None, 100_000), item("2", None), item("3", 300_000)],
+    )
+
+    assert resumo["sem_sku"] == 2
+    assert resumo["novos"] == 1
+    assert repositorio.ler_indice_do_catalogo("kabum.com.br", "placas") == {"3": 300_000}
+
+
+def test_item_que_sumiu_da_listagem_sai_do_indice(repositorio):
+    repositorio.salvar_catalogo(
+        "kabum.com.br", "placas", [item("1", 100_000), item("2", 200_000)]
+    )
+
+    repositorio.salvar_catalogo("kabum.com.br", "placas", [item("1", 100_000)])
+
+    # o índice reflete a listagem atual...
+    assert repositorio.ler_indice_do_catalogo("kabum.com.br", "placas") == {"1": 100_000}
+    # ...mas o documento do item sai de circulação sem ser apagado, para não
+    # quebrar quem já favoritou o produto
+    assert {i["sku"] for i in repositorio.listar_catalogo("kabum.com.br", "placas")} == {"1", "2"}
+
+
+def test_categorias_diferentes_nao_se_misturam(repositorio):
+    repositorio.salvar_catalogo("kabum.com.br", "placas", [item("1", 100_000)])
+    repositorio.salvar_catalogo("kabum.com.br", "processadores", [item("9", 50_000)])
+
+    assert repositorio.ler_indice_do_catalogo("kabum.com.br", "placas") == {"1": 100_000}
+    assert repositorio.ler_indice_do_catalogo("kabum.com.br", "processadores") == {"9": 50_000}
+    assert len(repositorio.listar_catalogo("kabum.com.br")) == 2
+
+
+def test_indice_inexistente_devolve_vazio(repositorio):
+    assert repositorio.ler_indice_do_catalogo("kabum.com.br", "nao-existe") == {}
+
+
+def test_controle_de_raspagem_separado_do_de_coleta(repositorio):
+    quando = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
+    repositorio.gravar_controle_raspagem(quando)
+
+    assert repositorio.ler_controle_raspagem() is not None
+    # o portão da coleta é outro documento e continua vazio
+    assert repositorio.ler_controle() is None

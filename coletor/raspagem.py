@@ -1,0 +1,163 @@
+"""Raspagem de catálogo: varre páginas de listagem e alimenta o catálogo.
+
+Processo SEPARADO do de verificação de preço, e com propósito diferente:
+
+  raspagem  -> descobrir quais produtos existem e quanto custam "de tabela"
+  coleta    -> preço real, histórico e alerta dos produtos que o usuário segue
+
+A separação não é organizacional, é factual. O preço da LISTAGEM é o preço de
+tabela: medido em 2026-08-10, ficava de 10% a 31% ACIMA do preço da página do
+produto na mesma loja e no mesmo instante. Usar o preço do catálogo para
+disparar alerta faria o gatilho comparar contra um número inflado, e o alerta
+simplesmente nunca dispararia — falha silenciosa, sem erro em log nenhum.
+
+Por isso o catálogo guarda apenas o instantâneo. A série histórica começa
+quando o usuário favorita, e vem da página do produto, pelo caminho que já
+existe (`produto` + `fonte` + `coleta.py`).
+"""
+
+import logging
+from dataclasses import dataclass
+from urllib.parse import urlsplit, urlunsplit
+
+import httpx
+
+from coletor.coleta import LimitadorPorHost, buscar_html
+from coletor.parser import ItemDeLista, extrair_lista
+
+logger = logging.getLogger(__name__)
+
+# A KaBuM ignora page_size e devolve 10 por página. Não há como pedir mais.
+PAGINAS_MAXIMAS = 40
+PARAMETRO_DE_PAGINA = "page_number"
+
+
+@dataclass(frozen=True)
+class Categoria:
+    """Uma listagem a raspar."""
+
+    loja: str
+    nome: str
+    url: str
+
+    @staticmethod
+    def da_url(url: str) -> "Categoria":
+        """Deriva loja e categoria da própria URL, para a configuração ser só
+        uma lista de endereços."""
+        partes = urlsplit(url)
+        loja = partes.netloc.lower().replace("www.", "")
+        trechos = [t for t in partes.path.split("/") if t]
+        nome = trechos[-1] if trechos else (partes.query or "raiz")
+        return Categoria(loja=loja, nome=nome, url=url)
+
+
+def url_da_pagina(url: str, pagina: int) -> str:
+    """Acrescenta `page_number` preservando o que já existe na query."""
+    if pagina <= 1:
+        return url
+    partes = urlsplit(url)
+    consulta = [p for p in partes.query.split("&") if p and not p.startswith(f"{PARAMETRO_DE_PAGINA}=")]
+    consulta.append(f"{PARAMETRO_DE_PAGINA}={pagina}")
+    return urlunsplit(
+        (partes.scheme, partes.netloc, partes.path, "&".join(consulta), partes.fragment)
+    )
+
+
+async def raspar_categoria(
+    categoria: Categoria,
+    cliente: httpx.AsyncClient,
+    *,
+    user_agent: str,
+    teto_centavos: int,
+    limitador: LimitadorPorHost,
+    paginas_maximas: int = PAGINAS_MAXIMAS,
+) -> list[ItemDeLista]:
+    """Percorre as páginas até parar de aparecer SKU novo.
+
+    Parar por repetição, e não por um número fixo de páginas, é o que faz a
+    varredura terminar sozinha quando a categoria acaba — lojas costumam
+    devolver a última página indefinidamente em vez de 404.
+    """
+    vistos: set[str] = set()
+    itens: list[ItemDeLista] = []
+
+    for pagina in range(1, paginas_maximas + 1):
+        endereco = url_da_pagina(categoria.url, pagina)
+        async with limitador.aguardar(endereco):
+            html, erro = await buscar_html(cliente, endereco, user_agent=user_agent)
+
+        if erro is not None:
+            logger.warning("página %d de %s falhou: %s", pagina, categoria.nome, erro)
+            break
+
+        novos = [
+            item
+            for item in extrair_lista(html or "", teto_centavos=teto_centavos)
+            if item.sku and item.sku not in vistos
+        ]
+        if not novos:
+            logger.info(
+                "categoria %s terminou na página %d (%d itens)",
+                categoria.nome, pagina, len(itens),
+            )
+            break
+
+        vistos.update(item.sku for item in novos)
+        itens.extend(novos)
+    else:
+        logger.warning(
+            "categoria %s atingiu o teto de %d páginas — pode haver mais itens",
+            categoria.nome, paginas_maximas,
+        )
+
+    return itens
+
+
+async def raspar(
+    categorias: list[Categoria],
+    repositorio,
+    *,
+    user_agent: str,
+    teto_centavos: int,
+    cliente: httpx.AsyncClient | None = None,
+    limitador: LimitadorPorHost | None = None,
+) -> dict:
+    """Raspa todas as categorias e grava o catálogo. Falha em uma não derruba
+    as demais."""
+    limitador = limitador or LimitadorPorHost()
+    proprio = cliente is None
+    cliente = cliente or httpx.AsyncClient(follow_redirects=True)
+
+    total = {"categorias": 0, "itens": 0, "novos": 0, "alterados": 0, "inalterados": 0}
+    try:
+        for categoria in categorias:
+            try:
+                itens = await raspar_categoria(
+                    categoria,
+                    cliente,
+                    user_agent=user_agent,
+                    teto_centavos=teto_centavos,
+                    limitador=limitador,
+                )
+                if not itens:
+                    logger.warning("categoria %s não devolveu itens", categoria.nome)
+                    continue
+                resumo = repositorio.salvar_catalogo(
+                    categoria.loja, categoria.nome, itens
+                )
+                total["categorias"] += 1
+                total["itens"] += len(itens)
+                for chave in ("novos", "alterados", "inalterados"):
+                    total[chave] += resumo[chave]
+                logger.info(
+                    "categoria %s: %d itens (%d novos, %d alterados, %d iguais)",
+                    categoria.nome, len(itens),
+                    resumo["novos"], resumo["alterados"], resumo["inalterados"],
+                )
+            except Exception:
+                logger.exception("falha ao raspar a categoria %s", categoria.nome)
+    finally:
+        if proprio:
+            await cliente.aclose()
+
+    return total

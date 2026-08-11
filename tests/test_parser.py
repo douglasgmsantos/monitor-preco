@@ -2,7 +2,9 @@
 
 import pytest
 
-from coletor.parser import ResultadoExtracao, extrair_preco, normalizar_para_centavos
+from coletor.parser import (
+    ResultadoExtracao, extrair_lista, extrair_preco, normalizar_para_centavos,
+)
 from conftest import carregar_gabarito, gabarito_disponivel, ler_fixture
 
 
@@ -308,7 +310,12 @@ def _casos_do_gabarito():
         itens = sorted(gabarito.items())
     else:
         itens = [(item["arquivo"], item) for item in gabarito]
-    return [(nome, dados) for nome, dados in itens if nome.endswith(".html")]
+    # listagens têm gabarito próprio (test_listagem_real_bate_com_o_gabarito)
+    return [
+        (nome, dados)
+        for nome, dados in itens
+        if nome.endswith(".html") and dados.get("tipo") != "listagem"
+    ]
 
 
 @pytest.mark.skipif(
@@ -340,3 +347,117 @@ def test_fixture_bate_com_o_gabarito(arquivo, esperado):
         assert resultado.disponivel is esperado["disponivel"]
     if "origem" in esperado:
         assert resultado.origem == esperado["origem"]
+
+
+# --- Listagem (catálogo) -----------------------------------------------------
+
+
+def pagina_lista(*blocos: str) -> str:
+    return pagina(*blocos)
+
+
+def test_lista_array_raiz_de_produtos():
+    bloco = (
+        '[{"@type":"Product","sku":"A1","name":"Um","offers":{"@type":"Offer",'
+        '"url":"https://loja.example/produto/1/um","price":"10,00","priceCurrency":"BRL"}},'
+        '{"@type":"Product","sku":"A2","name":"Dois","offers":{"@type":"Offer",'
+        '"url":"https://loja.example/produto/2/dois","price":"20,00","priceCurrency":"BRL"}}]'
+    )
+    itens = extrair_lista(pagina_lista(bloco))
+    assert [i.sku for i in itens] == ["A1", "A2"]
+    assert [i.preco_centavos for i in itens] == [1000, 2000]
+    assert [i.nome for i in itens] == ["Um", "Dois"]
+
+
+def test_lista_sem_availability_devolve_none():
+    """Listagem não publica estoque; afirmar True seria inventar."""
+    bloco = (
+        '[{"@type":"Product","sku":"A1","offers":{"@type":"Offer",'
+        '"url":"https://loja.example/p/1","price":"10,00","priceCurrency":"BRL"}}]'
+    )
+    assert extrair_lista(pagina_lista(bloco))[0].disponivel is None
+
+
+def test_lista_respeita_availability_quando_existe():
+    bloco = (
+        '[{"@type":"Product","sku":"A1","offers":{"@type":"Offer",'
+        '"url":"https://loja.example/p/1","price":"10,00","priceCurrency":"BRL",'
+        '"availability":"https://schema.org/OutOfStock"}}]'
+    )
+    assert extrair_lista(pagina_lista(bloco))[0].disponivel is False
+
+
+def test_lista_descarta_item_sem_preco_legivel():
+    bloco = (
+        '[{"@type":"Product","sku":"A1","offers":{"@type":"Offer",'
+        '"url":"https://loja.example/p/1","price":"consulte","priceCurrency":"BRL"}},'
+        '{"@type":"Product","sku":"A2","offers":{"@type":"Offer",'
+        '"url":"https://loja.example/p/2","price":"10,00","priceCurrency":"BRL"}}]'
+    )
+    assert [i.sku for i in extrair_lista(pagina_lista(bloco))] == ["A2"]
+
+
+def test_lista_descarta_moeda_estrangeira():
+    bloco = (
+        '[{"@type":"Product","sku":"A1","offers":{"@type":"Offer",'
+        '"url":"https://loja.example/p/1","price":"10.00","priceCurrency":"USD"}}]'
+    )
+    assert extrair_lista(pagina_lista(bloco)) == []
+
+
+def test_lista_descarta_item_sem_offers():
+    bloco = '[{"@type":"Product","sku":"A1","name":"Sem oferta"}]'
+    assert extrair_lista(pagina_lista(bloco)) == []
+
+
+def test_lista_deduplica_o_mesmo_sku():
+    """Carrosséis repetem o mesmo produto na página."""
+    item = (
+        '{"@type":"Product","sku":"A1","offers":{"@type":"Offer",'
+        '"url":"https://loja.example/p/1","price":"10,00","priceCurrency":"BRL"}}'
+    )
+    assert len(extrair_lista(pagina_lista(f"[{item},{item}]"))) == 1
+
+
+def test_sku_vem_da_url_quando_nao_declarado():
+    bloco = (
+        '[{"@type":"Product","offers":{"@type":"Offer",'
+        '"url":"https://loja.example/produto/725947/slug-do-produto",'
+        '"price":"10,00","priceCurrency":"BRL"}}]'
+    )
+    assert extrair_lista(pagina_lista(bloco))[0].sku == "725947"
+
+
+def test_sku_declarado_tem_prioridade_sobre_a_url():
+    bloco = (
+        '[{"@type":"Product","sku":"OFICIAL","offers":{"@type":"Offer",'
+        '"url":"https://loja.example/produto/999/slug","price":"10,00","priceCurrency":"BRL"}}]'
+    )
+    assert extrair_lista(pagina_lista(bloco))[0].sku == "OFICIAL"
+
+
+def test_lista_em_pagina_sem_jsonld():
+    assert extrair_lista("<html><body>nada</body></html>") == []
+
+
+def test_pagina_de_produto_unico_tambem_e_lista_de_um():
+    """extrair_lista e extrair_preco leem a mesma página de formas diferentes."""
+    itens = extrair_lista(pagina(PRODUTO_SIMPLES))
+    assert len(itens) == 1
+    assert itens[0].preco_centavos == 129990
+
+
+@pytest.mark.skipif(not gabarito_disponivel(), reason="gabarito não fornecido")
+def test_listagem_real_bate_com_o_gabarito():
+    gabarito = carregar_gabarito().get("listagem_a.html")
+    if gabarito is None:
+        pytest.skip("gabarito de listagem ausente")
+
+    itens = extrair_lista(ler_fixture("listagem_a.html"))
+
+    assert len(itens) == gabarito["quantidade"]
+    obtido = {i.sku: i.preco_centavos for i in itens}
+    esperado = {i["sku"]: i["preco_centavos"] for i in gabarito["itens"]}
+    assert obtido == esperado
+    assert all(i.url and i.url.startswith("https://") for i in itens)
+    assert all(i.disponivel is None for i in itens)   # listagem não traz estoque

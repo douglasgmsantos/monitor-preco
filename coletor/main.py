@@ -23,6 +23,7 @@ from google.api_core.exceptions import FailedPrecondition, PermissionDenied
 from coletor import alertas, config
 from coletor.coleta import LimitadorPorHost, coletar_fontes, validar_fonte_pendente
 from coletor.notificador import NotificadorTelegram
+from coletor.raspagem import Categoria, raspar
 from coletor.repositorio import Repositorio, inicializar
 
 logger = logging.getLogger("coletor")
@@ -131,6 +132,51 @@ def avaliar_alertas(
     return notificados
 
 
+async def _raspar_se_for_hora(
+    repositorio: Repositorio,
+    cliente: httpx.AsyncClient,
+    limitador: LimitadorPorHost,
+    cfg: config.Config,
+    agora: datetime,
+) -> dict | None:
+    """Raspa o catálogo quando o intervalo próprio já passou.
+
+    Portão separado do da coleta: o catálogo muda de composição em dias, o
+    preço muda em horas. Raspar junto com a coleta gastaria requisições nas
+    lojas sem informação nova.
+    """
+    if not cfg.categorias_raspagem:
+        return None
+
+    ultima = repositorio.ler_controle_raspagem()
+    if not esta_na_hora(ultima, agora, cfg.intervalo_raspagem_horas):
+        logger.info("fora da janela de raspagem (última em %s)", ultima)
+        return None
+
+    categorias = [Categoria.da_url(url) for url in cfg.categorias_raspagem]
+    logger.info("raspando %d categoria(s)", len(categorias))
+    try:
+        total = await raspar(
+            categorias,
+            repositorio,
+            user_agent=cfg.user_agent,
+            teto_centavos=cfg.teto_centavos,
+            cliente=cliente,
+            limitador=limitador,
+        )
+    except Exception:
+        logger.exception("raspagem abortada; a coleta segue normalmente")
+        return None
+
+    repositorio.gravar_controle_raspagem(agora)
+    logger.info(
+        "catálogo: %d categoria(s), %d itens (%d novos, %d alterados, %d iguais)",
+        total["categorias"], total["itens"],
+        total["novos"], total["alterados"], total["inalterados"],
+    )
+    return total
+
+
 def esta_na_hora(
     ultima: datetime | None, agora: datetime, intervalo_horas: int
 ) -> bool:
@@ -155,13 +201,20 @@ async def executar_ciclo(
     if notificador is None:
         notificador = NotificadorTelegram(cfg.telegram_bot_token, cfg.telegram_chat_id)
 
-    resumo = {"pendentes": 0, "coletadas": 0, "notificados": 0, "coletou": False}
+    resumo = {"pendentes": 0, "coletadas": 0, "notificados": 0,
+              "coletou": False, "catalogo": None}
     limitador = LimitadorPorHost()
 
     async with httpx.AsyncClient(follow_redirects=True) as cliente:
         # Passo 2 — pendentes SEMPRE.
         resumo["pendentes"] = await processar_pendentes(
             repositorio, cliente, limitador, cfg
+        )
+
+        # Raspagem de catálogo — cadência própria, bem mais lenta que a coleta.
+        # Descobrir que produtos existem muda devagar; o preço deles, não.
+        resumo["catalogo"] = await _raspar_se_for_hora(
+            repositorio, cliente, limitador, cfg, agora
         )
 
         # Passos 3 e 4 — a cadência vem de sistema/controle, nunca do cron.

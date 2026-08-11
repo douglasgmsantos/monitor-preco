@@ -5,7 +5,6 @@
     "captura": "HTTP simples com User-Agent de navegador. As 4 lojas também respondem com o User-Agent honesto do coletor (MonitorPrecos/1.0), sem bloqueio.",
     "aviso": "São fotografias de um instante. Se uma loja mudar o markup, a fixture continua válida como caso de teste — não a recapture para 'consertar' um teste vermelho sem antes entender o que mudou."
   },
-
   "loja_a_produto.html": {
     "loja": "KaBuM",
     "url": "https://www.kabum.com.br/produto/109720",
@@ -18,7 +17,6 @@
     "disponivel": false,
     "origem": "j"
   },
-
   "loja_b_produto.html": {
     "loja": "Terabyte Shop",
     "url": "https://www.terabyteshop.com.br/produto/25101/placa-de-video-xfx-amd-radeon-rx-7600-speedster-qick-308-8gb-gddr6-fsr-ray-tracing-rx-76pqickby",
@@ -31,7 +29,6 @@
     "disponivel": true,
     "origem": "j"
   },
-
   "loja_c_produto.html": {
     "loja": "Pichau",
     "url": "https://www.pichau.com.br/placa-de-video-msi-geforce-rtx-5090-gaming-trio-oc-32gb-gddr7-512-bit-912-v530-070-nac",
@@ -44,7 +41,6 @@
     "disponivel": true,
     "origem": "j"
   },
-
   "loja_d_produto.html": {
     "loja": "Carrefour",
     "url": "https://www.carrefour.com.br/produto/apple-macbook-air-136-pol-m4-cpu-de-10-nucleos-gpu-de-10-nucleos-16gb-ram-512gb-ssd-meia-noite",
@@ -56,5 +52,64 @@
     "preco_centavos": 999000,
     "disponivel": true,
     "origem": "j"
+  },
+  "listagem_a.html": {
+    "loja": "KaBuM",
+    "url": "https://www.kabum.com.br/hardware/placa-de-video-vga",
+    "tipo": "listagem",
+    "interesse": "array raiz de 10 Product; offers com url e price; SEM availability",
+    "quantidade": 10,
+    "itens": [
+      {
+        "sku": "725947",
+        "preco_centavos": 559999,
+        "nome": "Placa de Vídeo XFX Swift RX 9070 XT TRIPLE FAN GAMING EDITIO"
+      },
+      {
+        "sku": "779095",
+        "preco_centavos": 399999,
+        "nome": "Placa de Vídeo ASRock RX 9060 XT CL 16GO AMD Radeon, 16GB, G"
+      },
+      {
+        "sku": "1012613",
+        "preco_centavos": 169990,
+        "nome": "Placa De Vídeo MSI RTX 3050 LP OC NVIDIA Geforce, 6GB, GDDR6"
+      },
+      {
+        "sku": "1000741",
+        "preco_centavos": 399999,
+        "nome": "Placa de Vídeo MSI RTX 5060 Shadow 2X OC NVIDIA GeForce, 8GB"
+      },
+      {
+        "sku": "725948",
+        "preco_centavos": 527990,
+        "nome": "Placa de Vídeo XFX Swift RX 9070 XT WHITE TRIPLE FAN GAMING "
+      },
+      {
+        "sku": "703109",
+        "preco_centavos": 170990,
+        "nome": "Placa de Vídeo Galax GeForce RTX 3050 EX V2, 6GB, GDDR6, 96 "
+      },
+      {
+        "sku": "921271",
+        "preco_centavos": 699999,
+        "nome": "Placa de Vídeo ASRock Radeon RX 9070 XT Challenger, AMD, 16G"
+      },
+      {
+        "sku": "998334",
+        "preco_centavos": 199999,
+        "nome": "Placa de Vídeo PcYes Nvidia Geforce Rtx 3050 6Gb Gddr6 96Bit"
+      },
+      {
+        "sku": "1012609",
+        "preco_centavos": 359999,
+        "nome": "Placa De Vídeo MSI RTX 5060 Ti Ventus 2X OC Plus NVIDIA GeFo"
+      },
+      {
+        "sku": "882316",
+        "preco_centavos": 292200,
+        "nome": "Placa De Video Msi Geforce RTX 5060 Shadow 2x Oc 8GB Gddr7 1"
+      }
+    ]
   }
 }

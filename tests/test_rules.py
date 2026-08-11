@@ -289,3 +289,55 @@ def test_fonte_saudavel_pode_ser_reenfileirada(cenario):
     """
     cenario.update({"status": "ok", "motivoInvalida": None, "comErro": False})
     assert permitido(escrever("u1", CAMINHO_FONTE, RETENTATIVA))
+
+
+# --- catálogo ---------------------------------------------------------------
+
+CAMINHO_ITEM = "catalogo/kabum.com.br/itens/725947"
+
+
+def ler_anonimo(caminho: str) -> httpx.Response:
+    return httpx.get(f"{BASE}/{caminho}", timeout=15)
+
+
+@pytest.fixture
+def catalogo(cenario):
+    """Semeia um item de catálogo com o Admin SDK."""
+    rep = Repositorio()
+    rep._db.document(CAMINHO_ITEM).set(
+        {"sku": "725947", "nome": "Placa", "loja": "kabum.com.br",
+         "categoria": "placas", "precoTabelaCentavos": 559999}
+    )
+    return rep
+
+
+def test_usuario_autenticado_le_o_catalogo(catalogo):
+    assert permitido(ler("u1", CAMINHO_ITEM))
+
+
+def test_outro_usuario_tambem_le_o_catalogo(catalogo):
+    """O catálogo é compartilhado: não há dado pessoal nele."""
+    assert permitido(ler("u2", CAMINHO_ITEM))
+
+
+def test_anonimo_nao_le_o_catalogo(catalogo):
+    assert not permitido(ler_anonimo(CAMINHO_ITEM))
+
+
+def test_cliente_nao_escreve_no_catalogo(catalogo):
+    resposta = escrever(
+        "u1", CAMINHO_ITEM, {"precoTabelaCentavos": {"integerValue": "1"}}
+    )
+    assert not permitido(resposta)
+
+
+def test_cliente_nao_apaga_item_do_catalogo(catalogo):
+    assert not permitido(apagar("u1", CAMINHO_ITEM))
+
+
+def test_cliente_nao_escreve_no_indice_do_catalogo(catalogo):
+    resposta = escrever(
+        "u1", "catalogo/kabum.com.br/indice/placas",
+        {"quantidade": {"integerValue": "99"}},
+    )
+    assert not permitido(resposta)
