@@ -213,6 +213,9 @@ const DOMINIOS_INCOMPATIVEIS = [
   // A Pichau responde de IP residencial mas recusa o datacenter onde o coletor
   // roda. Como o coletor SÓ roda de lá, para este sistema ela é inviável.
   { padrao: /(^|\.)pichau\.com\.br$/, motivo: "a Pichau recusa requisições do datacenter onde o coletor roda (HTTP 403)" },
+  { padrao: /(^|\.)americanas\.com\.br$/, motivo: "a Americanas monta a página por JavaScript; o HTML não traz preço nem produto" },
+  { padrao: /(^|\.)submarino\.com\.br$/, motivo: "mesma plataforma da Americanas: página montada por JavaScript" },
+  { padrao: /(^|\.)shoptime\.com\.br$/, motivo: "mesma plataforma da Americanas: página montada por JavaScript" },
 ];
 
 function hostDaUrl(url) {
@@ -810,6 +813,7 @@ async function carregarCatalogo() {
           catalogo.push({
             loja: loja.id, categoria: indice.id, sku,
             nome: i.n || "", url: i.u || "",
+            imagem: i.img || null,
             preco: i.p ?? null,          // preço que a vitrine apresenta
             tabela: i.t ?? null,         // preço "de" riscado, quando publicado
             disponivel: i.d ?? null,
@@ -899,8 +903,17 @@ function renderizarCatalogo() {
         : `<div class="tabela">${formatarBRL(i.preco)}
              <span class="dica">de tabela</span></div>`;
 
+    // loading="lazy" para a grade não baixar 6 imagens de uma vez, e
+    // onerror para um link quebrado não deixar um quadro vazio sem explicação
+    const figura = i.imagem
+      ? `<div class="moldura-img"><img src="${esc(i.imagem)}" alt="${esc(i.nome)}"
+             loading="lazy" decoding="async"
+             onerror="this.closest('.moldura-img').innerHTML='<span class=&quot;sem-img&quot;>◻</span>'"></div>`
+      : `<div class="moldura-img"><span class="sem-img">◻</span></div>`;
+
     return `
       <div class="item ${jaSegue ? "seguido" : ""} ${esgotado ? "esgotado" : ""}">
+        ${figura}
         <div class="titulo" title="${esc(i.nome)}">${esc(i.nome)}</div>
         ${linhaPreco}
         <div class="rodape">

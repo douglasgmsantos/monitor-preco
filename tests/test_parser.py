@@ -566,3 +566,84 @@ def test_listagem_por_dom_bate_com_o_gabarito():
         i.preco_centavos <= i.preco_tabela_centavos
         for i in itens if i.preco_centavos and i.preco_tabela_centavos
     )
+
+
+# --- Imagem do produto -------------------------------------------------------
+
+
+def test_imagem_do_jsonld_como_string():
+    bloco = (
+        '[{"@type":"Product","sku":"1","image":"https://img.example/a.jpg",'
+        '"offers":{"@type":"Offer","url":"https://loja.example/p/1",'
+        '"price":"10,00","priceCurrency":"BRL"}}]'
+    )
+    assert extrair_lista(pagina(bloco))[0].imagem == "https://img.example/a.jpg"
+
+
+@pytest.mark.parametrize(
+    "campo, esperado",
+    [
+        ('["https://img.example/a.jpg","https://img.example/b.jpg"]',
+         "https://img.example/a.jpg"),
+        ('{"@type":"ImageObject","url":"https://img.example/c.jpg"}',
+         "https://img.example/c.jpg"),
+        ('"http://inseguro.example/a.jpg"', None),   # http quebraria a página
+        ('""', None),
+        ("null", None),
+    ],
+)
+def test_imagem_do_jsonld_em_outras_formas(campo, esperado):
+    bloco = (
+        f'[{{"@type":"Product","sku":"1","image":{campo},'
+        '"offers":{"@type":"Offer","url":"https://loja.example/p/1",'
+        '"price":"10,00","priceCurrency":"BRL"}}]'
+    )
+    assert extrair_lista(pagina(bloco))[0].imagem == esperado
+
+
+def test_imagem_do_dom():
+    seletores = SeletoresDeListagem(
+        item="div.card", nome="a.nome", url="a.nome",
+        preco=".preco-novo span", imagem="img.foto",
+    )
+    html = (
+        '<html><body><div class="card">'
+        '<img class="foto" src="https://img.example/a.jpg">'
+        '<a class="nome" href="/produto/1/x">X</a>'
+        '<div class="preco-novo"><span>R$ 10,00</span></div>'
+        "</div></body></html>"
+    )
+    (item,) = extrair_lista_dom(html, seletores, base_url="https://loja.example/busca")
+    assert item.imagem == "https://img.example/a.jpg"
+
+
+def test_imagem_do_dom_em_data_src():
+    """Lazy-load costuma esconder o endereço real fora do src."""
+    seletores = SeletoresDeListagem(
+        item="div.card", nome="a.nome", url="a.nome",
+        preco=".preco-novo span", imagem="img.foto",
+    )
+    html = (
+        '<html><body><div class="card">'
+        '<img class="foto" data-src="https://img.example/a.jpg">'
+        '<a class="nome" href="/produto/1/x">X</a>'
+        '<div class="preco-novo"><span>R$ 10,00</span></div>'
+        "</div></body></html>"
+    )
+    (item,) = extrair_lista_dom(html, seletores, base_url="https://loja.example/busca")
+    assert item.imagem == "https://img.example/a.jpg"
+
+
+@pytest.mark.skipif(not gabarito_disponivel(), reason="gabarito não fornecido")
+def test_fixtures_reais_trazem_imagem():
+    from coletor.raspagem import SELETORES_TERABYTE
+
+    kabum = extrair_lista(ler_fixture("listagem_a.html"))
+    terabyte = extrair_lista_dom(
+        ler_fixture("listagem_b.html"), SELETORES_TERABYTE,
+        base_url="https://www.terabyteshop.com.br/busca?str=placa+de+video",
+    )
+
+    assert all(i.imagem and i.imagem.startswith("https://") for i in kabum)
+    com_imagem = sum(1 for i in terabyte if i.imagem)
+    assert com_imagem == len(terabyte)

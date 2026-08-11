@@ -147,6 +147,23 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   border: 1px solid var(--borda); border-radius: 9px; padding: 12px 14px;
   display: flex; flex-direction: column; gap: 6px; min-width: 0;
 }
+.item .moldura-img {
+  /* proporção fixa: cartões não dançam enquanto as imagens carregam */
+  aspect-ratio: 1 / 1;
+  border-radius: 10px;
+  overflow: hidden;                 /* é o overflow que arredonda a imagem */
+  background: var(--plano);
+  border: 1px solid var(--borda);
+  display: grid; place-items: center;
+}
+.item .moldura-img img {
+  width: 100%; height: 100%;
+  object-fit: contain;              /* produto inteiro, sem cortar */
+  display: block;
+  border-radius: 10px;
+}
+.item .sem-img { color: var(--tinta-fraca); font-size: 22px; }
+.item.esgotado .moldura-img img { filter: grayscale(1); }
 .item .titulo {
   font-size: 13px; line-height: 1.35; min-height: 2.7em;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;

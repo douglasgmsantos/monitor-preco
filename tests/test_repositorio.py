@@ -651,7 +651,7 @@ def test_vitrine_serve_o_catalogo_em_uma_leitura(repositorio):
     assert vitrine["1"]["p"] == 100_000
     assert vitrine["1"]["u"].startswith("https://")
     # chaves curtas: o nome do campo é cobrado em cada entrada
-    assert set(vitrine["1"]) == {"n", "u", "p", "d", "t", "vt"}
+    assert set(vitrine["1"]) == {"n", "u", "p", "d", "t", "img", "vt"}
 
 
 def test_documento_da_loja_permite_descobrir_lojas(repositorio):

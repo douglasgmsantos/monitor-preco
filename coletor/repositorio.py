@@ -502,6 +502,7 @@ class Repositorio:
                 "p": item.preco_centavos,
                 "d": item.disponivel,
                 "t": item.preco_tabela_centavos,
+                "img": item.imagem,
                 "vt": agora,     # visto nesta raspagem
             }
             vistos_agora.add(item.sku)
@@ -523,6 +524,7 @@ class Repositorio:
                         "precoCentavos": item.preco_centavos,
                         "precoTabelaCentavos": item.preco_tabela_centavos,
                         "disponivel": item.disponivel,
+                        "imagem": item.imagem,
                         "atualizadoEm": agora,
                     },
                 )

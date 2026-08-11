@@ -72,6 +72,7 @@ class ItemDeLista:
     # um valor no JSON-LD (que é o de tabela); o Terabyte publica os dois no
     # HTML, e aí `preco_centavos` é o de venda de verdade.
     preco_tabela_centavos: int | None = None
+    imagem: str | None = None
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,7 @@ class SeletoresDeListagem:
     preco: str
     preco_tabela: str | None = None
     nome_atributo: str | None = None   # ex.: title, quando o texto é truncado
+    imagem: str | None = None
     # Lojas que escrevem "Indisponível" no lugar do preço estão informando
     # estoque de graça — algo que o JSON-LD da listagem não dá.
     marcadores_indisponivel: tuple[str, ...] = (
@@ -441,6 +443,7 @@ def extrair_lista(html: str, *, teto_centavos: int = TETO_CENTAVOS) -> list[Item
             nome = produto.get("name")
             itens.append(
                 ItemDeLista(
+                    imagem=_primeira_imagem(produto.get("image")),
                     sku=sku,
                     nome=entidades_html.unescape(nome.strip()) if isinstance(nome, str) else None,
                     url=url,
@@ -507,9 +510,48 @@ def extrair_lista_dom(
                         cartao, seletores.preco_tabela, teto_centavos
                     )
                 ),
+                imagem=_imagem_do_seletor(cartao, seletores.imagem, base_url),
             )
         )
     return itens
+
+
+def _primeira_imagem(bruto) -> str | None:
+    """`image` do schema.org vem como string, lista ou objeto ImageObject."""
+    if isinstance(bruto, str):
+        return _url_de_imagem(bruto)
+    if isinstance(bruto, list):
+        for candidato in bruto:
+            achado = _primeira_imagem(candidato)
+            if achado:
+                return achado
+        return None
+    if isinstance(bruto, dict):
+        return _primeira_imagem(bruto.get("url") or bruto.get("contentUrl"))
+    return None
+
+
+def _url_de_imagem(bruto: str | None, base_url: str = "") -> str | None:
+    """Só aceita https: imagem em http quebraria a página por conteúdo misto."""
+    url = _absolutizar(bruto, base_url) if base_url else (bruto or "").strip()
+    if not url:
+        return None
+    return url if url.startswith("https://") else None
+
+
+def _imagem_do_seletor(cartao, seletor: str | None, base_url: str) -> str | None:
+    if not seletor:
+        return None
+    no = cartao.css_first(seletor)
+    if no is None:
+        return None
+    # lazy-load costuma esconder o endereço real em data-src
+    for atributo in ("src", "data-src", "data-original"):
+        valor = no.attributes.get(atributo)
+        achado = _url_de_imagem(valor, base_url)
+        if achado:
+            return achado
+    return None
 
 
 def _texto_do_seletor(cartao, seletor: str, atributo: str | None) -> str | None:

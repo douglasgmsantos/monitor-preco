@@ -55,6 +55,7 @@ SELETORES_TERABYTE = SeletoresDeListagem(
     url="a.product-item__name",
     preco=".product-item__new-price span",
     preco_tabela=".product-item__old-price del span",
+    imagem="img.image-thumbnail",
 )
 
 

@@ -96,10 +96,12 @@ Só entram lojas verificadas na página de produto real: o preço vem em
 |---|---|
 | Amazon | não publica JSON-LD — zero blocos em 1,8 MB de HTML |
 | Mercado Livre | serve um shell de ~39 KB e monta tudo por JavaScript |
-| Magazine Luiza | HTTP 403 mesmo com User-Agent de navegador |
+| Magazine Luiza | HTTP 403 em **tudo**, inclusive na home, com qualquer User-Agent |
 | Pichau | responde de IP residencial, **recusa o datacenter** onde o coletor roda (HTTP 403) |
+| Americanas | responde 200, mas monta tudo por JS: home só tem `WebSite`/`Organization`, busca vem com 0 preços no HTML |
+| Submarino, Shoptime | mesma plataforma da Americanas |
 
-O front recusa essas quatro de saída. Outras lojas podem ser cadastradas em
+O front recusa todas essas de saída. Outras lojas podem ser cadastradas em
 "Outra loja", mas só a primeira coleta dirá se a página é legível.
 
 > **Aviso sobre a lista acima.** A verificação inicial foi feita de um IP
