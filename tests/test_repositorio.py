@@ -635,3 +635,27 @@ def test_controle_de_raspagem_separado_do_de_coleta(repositorio):
     assert repositorio.ler_controle_raspagem() is not None
     # o portão da coleta é outro documento e continua vazio
     assert repositorio.ler_controle() is None
+
+
+def test_vitrine_serve_o_catalogo_em_uma_leitura(repositorio):
+    repositorio.salvar_catalogo(
+        "kabum.com.br", "placas",
+        [item("1", 100_000, "Placa Um"), item("2", 200_000, "Placa Dois")],
+    )
+
+    vitrine = repositorio.ler_vitrine("kabum.com.br", "placas")
+
+    assert set(vitrine) == {"1", "2"}
+    assert vitrine["1"]["n"] == "Placa Um"
+    assert vitrine["1"]["p"] == 100_000
+    assert vitrine["1"]["u"].startswith("https://")
+    # chaves curtas: o nome do campo é cobrado em cada entrada
+    assert set(vitrine["1"]) == {"n", "u", "p"}
+
+
+def test_documento_da_loja_permite_descobrir_lojas(repositorio):
+    repositorio.salvar_catalogo("kabum.com.br", "placas", [item("1", 100_000)])
+
+    doc = repositorio._db.collection("catalogo").document("kabum.com.br").get()
+    assert doc.exists
+    assert doc.to_dict()["loja"] == "kabum.com.br"

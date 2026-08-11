@@ -341,3 +341,21 @@ def test_cliente_nao_escreve_no_indice_do_catalogo(catalogo):
         {"quantidade": {"integerValue": "99"}},
     )
     assert not permitido(resposta)
+
+
+def test_autenticado_lista_lojas_e_categorias(catalogo):
+    """O front descobre lojas e categorias listando coleções — `read` cobre
+    `get` e `list`, mas isso precisa ser verificado, não suposto."""
+    catalogo._db.document("catalogo/kabum.com.br").set({"loja": "kabum.com.br"})
+    catalogo._db.document("catalogo/kabum.com.br/indice/placas").set(
+        {"categoria": "placas", "quantidade": 1,
+         "itens": {"725947": {"n": "Placa", "u": "https://x", "p": 559999}}}
+    )
+
+    assert permitido(ler("u1", "catalogo"))
+    assert permitido(ler("u1", "catalogo/kabum.com.br/indice"))
+    assert permitido(ler("u1", "catalogo/kabum.com.br/indice/placas"))
+
+
+def test_anonimo_nao_lista_o_catalogo(catalogo):
+    assert not permitido(ler_anonimo("catalogo"))

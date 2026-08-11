@@ -173,6 +173,7 @@ onAuthStateChanged(auth, (usuario) => {
   if (usuario) {
     $("quem").textContent = usuario.email || usuario.displayName || "";
     observarProdutos();
+    carregarCatalogo();
   } else {
     if (cancelarProdutos) cancelarProdutos();
     cancelarFontes.forEach((fn) => fn());
@@ -444,6 +445,8 @@ $("btSalvar").addEventListener("click", async () => {
 function limparFormulario() {
   $("nome").value = "";
   $("alvo").value = "";
+  $("alvo").placeholder = "1.789,90";
+  $("tituloForm").textContent = "Novo produto";
   $("tolerancia").value = "0";
   $("pares").innerHTML = "";
   adicionarParDeFonte();
@@ -553,6 +556,7 @@ function observarProdutos() {
         idSelecionado = produtos.length ? produtos[0].id : null;
       }
       renderizarLista();
+      renderizarCatalogo();
       carregarHistorico();
     },
     (erro) => console.error("falha ao observar produtos", erro),
@@ -570,6 +574,7 @@ function observarFontes(produtoId) {
         .map((d) => ({ id: d.id, ...d.data() }))
         .sort((a, b) => (a.id < b.id ? -1 : 1));
       renderizarLista();
+      renderizarCatalogo();
       if (produtoId === idSelecionado) carregarHistorico();
     },
     (erro) => console.error("falha ao observar fontes", erro),
@@ -767,6 +772,138 @@ function renderizarLista() {
     });
   });
 }
+
+// ---------------------------------------------------------------------------
+// Catálogo
+//
+// Uma leitura por categoria: o documento de índice traz {sku: {n, u, p}} da
+// categoria inteira. Ler item a item custaria uma leitura por produto.
+//
+// `p` é o preço de TABELA (vitrine), 10% a 31% acima do preço real da página
+// do produto — medido em 2026-08-10. Ele nunca dispara alerta; serve para
+// achar o produto. Ao acompanhar, o preço passa a vir da página.
+// ---------------------------------------------------------------------------
+
+let catalogo = [];              // [{loja, categoria, sku, nome, url, tabela}]
+let categoriasDoCatalogo = [];  // [{loja, categoria, quantidade, atualizadoEm}]
+
+async function carregarCatalogo() {
+  try {
+    catalogo = [];
+    categoriasDoCatalogo = [];
+    const lojas = await getDocs(collection(db, "catalogo"));
+
+    for (const loja of lojas.docs) {
+      const indices = await getDocs(collection(db, `catalogo/${loja.id}/indice`));
+      for (const indice of indices.docs) {
+        const dados = indice.data();
+        categoriasDoCatalogo.push({
+          loja: loja.id,
+          categoria: indice.id,
+          quantidade: dados.quantidade || 0,
+          atualizadoEm: dados.atualizadoEm || null,
+        });
+        for (const [sku, i] of Object.entries(dados.itens || {})) {
+          catalogo.push({
+            loja: loja.id, categoria: indice.id, sku,
+            nome: i.n || "", url: i.u || "", tabela: i.p ?? null,
+          });
+        }
+      }
+    }
+  } catch (erro) {
+    console.error("falha ao carregar o catálogo", erro);
+  }
+  montarFiltroDeCategoria();
+  renderizarCatalogo();
+}
+
+function montarFiltroDeCategoria() {
+  const alvo = $("categoriaCatalogo");
+  const atual = alvo.value;
+  alvo.innerHTML =
+    `<option value="">todas as categorias</option>` +
+    categoriasDoCatalogo
+      .map((c) => `<option value="${esc(c.categoria)}">${esc(c.categoria)} (${c.quantidade})</option>`)
+      .join("");
+  if (atual) alvo.value = atual;
+}
+
+/** URLs que o usuário já acompanha, para não oferecer duas vezes. */
+function urlsAcompanhadas() {
+  const urls = new Set();
+  for (const produto of produtos) {
+    for (const fonte of produto.fontes) urls.add(fonte.url);
+  }
+  return urls;
+}
+
+function renderizarCatalogo() {
+  const grade = $("gradeCatalogo");
+  const categoria = $("categoriaCatalogo").value;
+  const busca = $("buscaCatalogo").value.trim().toLowerCase();
+  const ordem = $("ordemCatalogo").value;
+  const seguidas = urlsAcompanhadas();
+
+  let itens = catalogo.filter((i) => i.tabela !== null);
+  if (categoria) itens = itens.filter((i) => i.categoria === categoria);
+  if (busca) itens = itens.filter((i) => i.nome.toLowerCase().includes(busca));
+  itens.sort((a, b) =>
+    ordem === "nome" ? a.nome.localeCompare(b.nome, "pt-BR") : a.tabela - b.tabela);
+
+  const total = categoriasDoCatalogo.reduce((soma, c) => soma + c.quantidade, 0);
+  $("resumoCatalogo").textContent = total
+    ? `· ${itens.length} de ${total} itens`
+    : "";
+  $("catalogoVazio").classList.toggle("oculto", total > 0);
+
+  grade.innerHTML = itens.map((i) => {
+    const jaSegue = seguidas.has(i.url);
+    return `
+      <div class="item ${jaSegue ? "seguido" : ""}">
+        <div class="titulo" title="${esc(i.nome)}">${esc(i.nome)}</div>
+        <div class="tabela">${formatarBRL(i.tabela)} <span class="dica">de tabela</span></div>
+        <div class="rodape">
+          ${jaSegue
+            ? `<span class="ja-segue">★ já acompanhado</span>`
+            : `<button class="discreto acompanhar" data-sku="${esc(i.sku)}">☆ acompanhar</button>`}
+          <a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">abrir na loja ↗</a>
+        </div>
+      </div>`;
+  }).join("");
+
+  grade.querySelectorAll(".acompanhar").forEach((botao) => {
+    botao.addEventListener("click", () => acompanharDoCatalogo(botao.dataset.sku));
+  });
+}
+
+/** Favoritar = criar produto + fonte, que é o caminho já testado.
+ *  Em vez de uma coleção de favoritos, o item pré-preenche o formulário: o
+ *  usuário só decide o preço-alvo, que é a única informação que o catálogo
+ *  não tem. */
+function acompanharDoCatalogo(sku) {
+  const item = catalogo.find((i) => i.sku === sku);
+  if (!item) return;
+
+  cancelarEdicao();
+  $("nome").value = item.nome;
+  $("tolerancia").value = "0";
+  $("pares").innerHTML = "";
+  const nomeDaLoja =
+    (LOJAS.find((l) => l.dominios.some((d) => item.loja.endsWith(d))) || {}).nome || "";
+  adicionarParDeFonte({ loja: nomeDaLoja, url: item.url });
+
+  $("alvo").value = "";
+  $("alvo").placeholder = `abaixo de ${formatarBRL(item.tabela).replace("R$", "").trim()}`;
+  $("tituloForm").textContent = "Acompanhar produto do catálogo";
+  erroForm(null);
+  $("alvo").scrollIntoView({ behavior: "smooth", block: "center" });
+  $("alvo").focus();
+}
+
+["categoriaCatalogo", "buscaCatalogo", "ordemCatalogo"].forEach((id) => {
+  $(id).addEventListener("input", renderizarCatalogo);
+});
 
 // ---------------------------------------------------------------------------
 // Histórico: 1d vem do bruto, os demais do rollup diário

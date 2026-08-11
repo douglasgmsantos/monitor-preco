@@ -138,6 +138,27 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .acoes button.perigo:hover { background: var(--plano); color: var(--critico); }
 .acoes-form { margin-top: 14px; display: flex; gap: 8px; align-items: center; }
 
+/* Catálogo */
+.grade {
+  display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+.item {
+  border: 1px solid var(--borda); border-radius: 9px; padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 6px; min-width: 0;
+}
+.item .titulo {
+  font-size: 13px; line-height: 1.35; min-height: 2.7em;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.item .tabela { font-variant-numeric: tabular-nums; font-size: 16px; font-weight: 580; }
+.item .rodape { display: flex; gap: 6px; align-items: center; margin-top: 2px; }
+.item .rodape a { color: var(--tinta-fraca); font-size: 12px; text-decoration: none; }
+.item .rodape a:hover { color: var(--serie-1); text-decoration: underline; }
+.item.seguido { border-color: var(--serie-1); }
+.item .ja-segue { font-size: 12px; color: var(--serie-1); }
+
 .fontes { display: grid; gap: 6px; margin-top: 10px; }
 /* min-width:0 nos itens é o que faz o ellipsis funcionar dentro de flex:
    sem isso o item não encolhe abaixo do conteúdo e estoura o cartão. */
@@ -234,6 +255,27 @@ label { display: block; font-size: 13px; color: var(--tinta-2); margin-bottom: 4
       <button id="btCancelarEdicao" class="discreto oculto">cancelar</button>
     </div>
     <p id="erroForm" class="erro oculto"></p>
+  </section>
+
+  <!-- Catálogo -->
+  <section class="cartao">
+    <h2>Catálogo <span id="resumoCatalogo" class="dica"></span></h2>
+    <div class="filtros">
+      <select id="categoriaCatalogo"></select>
+      <input id="buscaCatalogo" placeholder="filtrar por nome…" style="flex:1;min-width:180px">
+      <select id="ordemCatalogo">
+        <option value="preco">menor preço</option>
+        <option value="nome">nome</option>
+      </select>
+    </div>
+    <p class="aviso-loja">
+      Os preços aqui são os de <strong>tabela</strong>, publicados na vitrine da loja.
+      Medidos em 2026-08-10, ficavam de <strong>10% a 31% acima</strong> do preço real
+      da página do produto. Servem para achar o produto, não para decidir compra — ao
+      acompanhar, o preço passa a vir da página e é esse que dispara o alerta.
+    </p>
+    <div id="gradeCatalogo" class="grade"></div>
+    <p id="catalogoVazio" class="vazio oculto">Catálogo ainda não foi raspado.</p>
   </section>
 
   <!-- Lista -->

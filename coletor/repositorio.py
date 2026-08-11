@@ -412,23 +412,36 @@ class Repositorio:
 
     # --- catálogo -----------------------------------------------------------
 
-    def ler_indice_do_catalogo(self, loja: str, categoria: str) -> dict[str, int]:
-        """Mapa {sku: precoTabelaCentavos} da última raspagem.
-
-        Uma leitura por categoria em vez de uma por produto: é a mesma jogada
-        do bucketing. Com 1.000 itens o documento fica em ~30 KB, contra o
-        limite de 1 MB.
-        """
-        snapshot = (
+    def _ref_indice(self, loja: str, categoria: str):
+        return (
             self._db.collection(COLECAO_CATALOGO)
             .document(loja)
             .collection(COLECAO_INDICE)
             .document(categoria)
-            .get()
         )
+
+    def ler_vitrine(self, loja: str, categoria: str) -> dict[str, dict]:
+        """Mapa {sku: {n: nome, u: url, p: precoTabelaCentavos}}.
+
+        UMA leitura serve a categoria inteira, para o coletor detectar mudança
+        e para o front listar o catálogo. Ler item a item custaria uma leitura
+        por produto — é a mesma jogada do bucketing do histórico.
+
+        Chaves curtas porque o nome do campo é cobrado em cada entrada: com 400
+        itens o documento fica em ~76 KB, contra o limite de 1 MB.
+        """
+        snapshot = self._ref_indice(loja, categoria).get()
         if not snapshot.exists:
             return {}
-        return (snapshot.to_dict() or {}).get("precos") or {}
+        return (snapshot.to_dict() or {}).get("itens") or {}
+
+    def ler_indice_do_catalogo(self, loja: str, categoria: str) -> dict[str, int]:
+        """Só os preços, para detectar o que mudou desde a última raspagem."""
+        return {
+            sku: dados.get("p")
+            for sku, dados in self.ler_vitrine(loja, categoria).items()
+            if isinstance(dados, dict) and dados.get("p") is not None
+        }
 
     def salvar_catalogo(
         self, loja: str, categoria: str, itens, agora: datetime | None = None
@@ -449,14 +462,18 @@ class Repositorio:
         )
 
         resumo = {"novos": 0, "alterados": 0, "inalterados": 0, "sem_sku": 0}
-        precos: dict[str, int] = {}
+        vitrine: dict[str, dict] = {}
         pendentes = []
 
         for item in itens:
             if not item.sku or item.preco_centavos is None:
                 resumo["sem_sku"] += 1
                 continue
-            precos[item.sku] = item.preco_centavos
+            vitrine[item.sku] = {
+                "n": item.nome,
+                "u": item.url,
+                "p": item.preco_centavos,
+            }
             antes = anterior.get(item.sku)
             if antes == item.preco_centavos:
                 resumo["inalterados"] += 1
@@ -484,16 +501,19 @@ class Repositorio:
                 lote.set(referencia, dados, merge=True)
             lote.commit()
 
-        self._db.collection(COLECAO_CATALOGO).document(loja).collection(
-            COLECAO_INDICE
-        ).document(categoria).set(
+        self._ref_indice(loja, categoria).set(
             {
                 "categoria": categoria,
                 "loja": loja,
-                "precos": precos,
-                "quantidade": len(precos),
+                "itens": vitrine,
+                "quantidade": len(vitrine),
                 "atualizadoEm": agora,
             }
+        )
+        # Documento da loja: existe para o front descobrir quais lojas há sem
+        # precisar de consulta de collection group (que exigiria índice).
+        self._db.collection(COLECAO_CATALOGO).document(loja).set(
+            {"loja": loja, "atualizadoEm": agora}, merge=True
         )
         return resumo
 
