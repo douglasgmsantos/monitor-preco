@@ -784,7 +784,9 @@ function renderizarLista() {
 // achar o produto. Ao acompanhar, o preço passa a vir da página.
 // ---------------------------------------------------------------------------
 
-let catalogo = [];              // [{loja, categoria, sku, nome, url, tabela}]
+const POR_PAGINA = 6;
+let paginaCatalogo = 1;
+let catalogo = [];              // [{loja, categoria, sku, nome, url, preco, tabela, disponivel}]
 let categoriasDoCatalogo = [];  // [{loja, categoria, quantidade, atualizadoEm}]
 
 async function carregarCatalogo() {
@@ -817,6 +819,7 @@ async function carregarCatalogo() {
   } catch (erro) {
     console.error("falha ao carregar o catálogo", erro);
   }
+  paginaCatalogo = 1;
   montarFiltroDeCategoria();
   renderizarCatalogo();
 }
@@ -860,12 +863,27 @@ function renderizarCatalogo() {
   });
 
   const total = categoriasDoCatalogo.reduce((soma, c) => soma + c.quantidade, 0);
-  $("resumoCatalogo").textContent = total
-    ? `· ${itens.length} de ${total} itens`
-    : "";
   $("catalogoVazio").classList.toggle("oculto", total > 0);
 
-  grade.innerHTML = itens.map((i) => {
+  // Paginação no cliente: o catálogo inteiro já veio numa leitura, então
+  // paginar aqui não custa nenhuma leitura a mais — só evita despejar
+  // centenas de cartões na tela de uma vez.
+  const paginas = Math.max(1, Math.ceil(itens.length / POR_PAGINA));
+  paginaCatalogo = Math.min(Math.max(1, paginaCatalogo), paginas);
+  const inicio = (paginaCatalogo - 1) * POR_PAGINA;
+  const visiveis = itens.slice(inicio, inicio + POR_PAGINA);
+
+  $("resumoCatalogo").textContent = itens.length
+    ? `· ${inicio + 1}–${inicio + visiveis.length} de ${itens.length}`
+      + (itens.length === total ? "" : ` (${total} no catálogo)`)
+    : total ? "· nenhum item com esse filtro" : "";
+
+  $("paginacaoCatalogo").classList.toggle("oculto", itens.length <= POR_PAGINA);
+  $("posicaoPagina").textContent = `página ${paginaCatalogo} de ${paginas}`;
+  $("btAnterior").disabled = paginaCatalogo <= 1;
+  $("btProxima").disabled = paginaCatalogo >= paginas;
+
+  grade.innerHTML = visiveis.map((i) => {
     const jaSegue = seguidas.has(i.url);
     const esgotado = i.disponivel === false;
 
@@ -925,8 +943,20 @@ function acompanharDoCatalogo(sku) {
 }
 
 ["categoriaCatalogo", "buscaCatalogo", "ordemCatalogo"].forEach((id) => {
-  $(id).addEventListener("input", renderizarCatalogo);
+  $(id).addEventListener("input", () => {
+    paginaCatalogo = 1;   // filtrar sempre volta ao começo
+    renderizarCatalogo();
+  });
 });
+
+function irParaPagina(delta) {
+  paginaCatalogo += delta;
+  renderizarCatalogo();
+  $("gradeCatalogo").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+$("btAnterior").addEventListener("click", () => irParaPagina(-1));
+$("btProxima").addEventListener("click", () => irParaPagina(1));
 
 // ---------------------------------------------------------------------------
 // Histórico: 1d vem do bruto, os demais do rollup diário

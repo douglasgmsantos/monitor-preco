@@ -160,6 +160,13 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .item.esgotado { opacity: 0.55; }
 .item .tabela s { font-weight: 400; font-size: 13px; }
 .item .ja-segue { font-size: 12px; color: var(--serie-1); }
+.paginacao {
+  display: flex; align-items: center; justify-content: center;
+  gap: 14px; margin-top: 14px;
+}
+.paginacao span { font-variant-numeric: tabular-nums; }
+.paginacao button[disabled] { opacity: 0.35; cursor: default; }
+.paginacao button[disabled]:hover { background: none; color: var(--tinta-2); }
 
 .fontes { display: grid; gap: 6px; margin-top: 10px; }
 /* min-width:0 nos itens é o que faz o ellipsis funcionar dentro de flex:
@@ -278,6 +285,11 @@ label { display: block; font-size: 13px; color: var(--tinta-2); margin-bottom: 4
       esse que dispara o alerta.
     </p>
     <div id="gradeCatalogo" class="grade"></div>
+    <div id="paginacaoCatalogo" class="paginacao oculto">
+      <button id="btAnterior" class="discreto">‹ anterior</button>
+      <span id="posicaoPagina" class="dica"></span>
+      <button id="btProxima" class="discreto">próxima ›</button>
+    </div>
     <p id="catalogoVazio" class="vazio oculto">Catálogo ainda não foi raspado.</p>
   </section>
 
