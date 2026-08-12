@@ -44,13 +44,17 @@ produção: reputação de IP é por IP, e a raspagem do Terabyte funciona hoje 
 partir do runner. Só a produção decide. Ver README, seção de lojas.
 """
 
+import logging
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from coletor.parser import (
-    TETO_CENTAVOS, ResultadoExtracao, SeletoresDeProduto, extrair_preco,
-    extrair_preco_dom,
+    ERRO_BLOQUEIO, TETO_CENTAVOS, ResultadoExtracao, SeletoresDeProduto,
+    extrair_preco, extrair_preco_do_estado, extrair_preco_dom,
+    parece_pagina_de_bloqueio,
 )
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Cabeçalhos
@@ -94,12 +98,63 @@ CABECALHOS_DE_NAVEGADOR = {
 # R$ 7.499,00 — outro preço, de outro bloco. Sem o escopo, o coletor gravaria
 # um número plausível e errado, que é a pior espécie de bug.
 SELETORES_AMAZON = SeletoresDeProduto(
-    preco="#corePrice_feature_div span.a-offscreen",
+    # Em ordem de confiança. A Amazon varia o bloco de preço por layout de
+    # página, e um produto com preço sempre casa um destes. O ESCOPO é o que
+    # importa em todos: `span.a-offscreen` solto casa 22 nós na página, sendo o
+    # segundo um preço de outro bloco.
+    preco=(
+        "#corePrice_feature_div span.a-offscreen",
+        "#corePriceDisplay_desktop_feature_div span.a-offscreen",
+        "#price_inside_buybox",
+        "span.priceToPay span.a-offscreen",
+        "#apex_offerDisplay_desktop span.a-offscreen",
+    ),
     prova_de_produto="#productTitle",
+    # `#unqualifiedBuyBox` é como a Amazon diz "este produto existe e ninguém
+    # está vendendo". Verificado em 2026-08-12 numa URL real do usuário: página
+    # completa de 1,1 MB, título presente, ZERO bloco de preço, e este marcador.
+    # Sem ele, esse estado virava `sem_preco_no_dom` — erro de parse — e a fonte
+    # era condenada como se a URL estivesse errada.
+    marcador_sem_oferta="#unqualifiedBuyBox",
     preco_tabela=".basisPrice .a-offscreen",
     disponibilidade="#availability",
     botao_de_compra="#add-to-cart-button",
 )
+
+# ---------------------------------------------------------------------------
+# Preço à vista: qual número o monitor deve seguir
+# ---------------------------------------------------------------------------
+#
+# Medido em 2026-08-12, no mesmo produto (ASRock RX 9070 XT) nas quatro lojas:
+#
+#   KaBuM      JSON-LD 5.199,99  =  "À vista no PIX com 15% de desconto"   ✅
+#   Terabyte   JSON-LD 4.599,90  =  "à vista com 15% de desconto no pix"   ✅
+#   Pichau     JSON-LD 5.529,40  =  `final_price` (parcelado). O à vista é
+#                                   4.699,99, e mora SÓ no estado embutido    ❌
+#   Amazon     DOM     5.830,53  =  preço normal. Há "5% off à vista no Pix",
+#                                   mas como BADGE de percentual — a loja não
+#                                   publica o valor absoluto em lugar nenhum    ❌
+#
+# Duas de três já entregam o preço com desconto no JSON-LD, então o alvo do
+# sistema é o PREÇO À VISTA: é o que se paga de fato, e é o que a maioria das
+# lojas já reporta. A Pichau ganha o ajuste abaixo para entrar nessa régua.
+#
+# A Amazon fica 5% acima da própria régua, e isso é DESVIO CONHECIDO E LIMITADO,
+# não bug: não existe número para ler. Consequência prática: numa disputa
+# apertada entre Amazon e outra loja, a Amazon parece até 5% mais cara do que é.
+#
+# POR QUE FALHAR EM VEZ DE CAIR PARA O JSON-LD: se a chave `avista` sumir, usar o
+# preço do JSON-LD da Pichau significaria gravar um número ~18% mais alto na
+# série histórica, para sempre e em silêncio. No caso deste repositório isso já
+# tem consequência medida: com gatilho em R$ 4.700,00, o à vista de R$ 4.699,99
+# dispara alerta e o parcelado de R$ 5.529,40 não dispara nunca. Preferimos a
+# fonte falhar alto — `sem_preco_avista` está em ERROS_DE_PARSE.
+
+# Uma captura só, e os três valores do bloco conferidos:
+#   {"avista":4699.99,"avista_discount":15,"avista_method":"PIX",
+#    "base_price":7058.81,"final_price":5529.4,...}
+# O estado vem escapado (`\"avista\":`), daí o `\\?` antes de cada aspa.
+PADRAO_AVISTA_PICHAU = r'\\?"avista\\?"\s*:\s*([0-9]+\.?[0-9]*)'
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +169,10 @@ class Loja:
     estrategia: str                      # "jsonld" | "dom"
     seletores: SeletoresDeProduto | None = None
     cabecalhos: dict[str, str] = field(default_factory=dict)
+    # Regex de um grupo que captura o preço à vista no estado embutido. Quando
+    # presente, VENCE o preço da estratégia — e a ausência dele na página é erro,
+    # não motivo para cair no número errado. Ver o bloco acima.
+    padrao_preco_avista: str | None = None
     # Anotação honesta do que se sabe sobre buscar esta loja de fora. Aparece no
     # log quando a coleta falha, para o motivo não virar adivinhação.
     observacao: str = ""
@@ -143,10 +202,13 @@ LOJAS: tuple[Loja, ...] = (
         nome="Pichau",
         dominios=("pichau.com.br",),
         estrategia="jsonld",
+        # O JSON-LD dela dá o parcelado; o preço que interessa vem do estado.
+        padrao_preco_avista=PADRAO_AVISTA_PICHAU,
         observacao=(
-            "JSON-LD verificado no template (R$ 5.529,40). Já recusou o runner "
-            "com 403 em produção uma vez — reabilitada a pedido, o parsing nunca "
-            "foi o problema"
+            "única loja cujo JSON-LD NÃO é o preço à vista: ele traz o "
+            "final_price (R$ 5.529,40) e o à vista (R$ 4.699,99) mora só no "
+            "estado embutido. Também é intermitente: aprovou a 200 e deu 403 na "
+            "coleta 60s depois, em 2026-08-12"
         ),
     ),
     Loja(
@@ -194,11 +256,62 @@ def extrair_da_loja(
     histórico de gente que não fez nada de errado.
     """
     loja = loja_de(url)
+
+    # Bloqueio primeiro, e para QUALQUER estratégia. `extrair_preco_dom` já
+    # checava, mas o caminho JSON-LD não — e é justamente o Terabyte que serve
+    # "Just a moment..." do Cloudflare. Sem esta linha, esse desafio viraria
+    # `sem_jsonld`, que é erro de PARSE e condena a fonte em 5 ciclos por um
+    # problema de TRANSPORTE.
+    if parece_pagina_de_bloqueio(html):
+        return ResultadoExtracao(None, None, False, None, ERRO_BLOQUEIO)
+
     if loja is not None and loja.estrategia == "dom":
-        return extrair_preco_dom(
+        resultado = extrair_preco_dom(
             html, loja.seletores, teto_centavos=teto_centavos
         )
-    return extrair_preco(html, teto_centavos=teto_centavos)
+    else:
+        resultado = extrair_preco(html, teto_centavos=teto_centavos)
+
+    if loja is not None and loja.padrao_preco_avista:
+        resultado = _com_preco_avista(resultado, html, loja, teto_centavos)
+    return resultado
+
+
+def _com_preco_avista(
+    resultado: ResultadoExtracao, html: str, loja: Loja, teto_centavos: int
+) -> ResultadoExtracao:
+    """Troca o preço pelo à vista da loja, ou falha alto se ele não estiver lá.
+
+    A ordem importa: um erro que já existia (bloqueio, página ilegível) passa
+    intacto. Não faz sentido reclamar de "sem preço à vista" numa página que o
+    servidor nem entregou.
+    """
+    if resultado.erro is not None:
+        return resultado
+
+    centavos = extrair_preco_do_estado(
+        html, loja.padrao_preco_avista, teto_centavos=teto_centavos
+    )
+    if centavos is None:
+        logger.warning(
+            "%s: preço à vista não encontrado no estado da página. O preço da "
+            "estratégia %s (%s centavos) NÃO será usado, porque nesta loja ele é "
+            "o parcelado — gravá-lo contaminaria a série histórica.",
+            loja.nome, loja.estrategia, resultado.preco_centavos,
+        )
+        return ResultadoExtracao(
+            None, None, resultado.disponivel, None, "sem_preco_avista"
+        )
+
+    return ResultadoExtracao(
+        preco_centavos=centavos,
+        moeda=resultado.moeda or "BRL",
+        # Disponibilidade continua vindo da estratégia: o JSON-LD da Pichau é
+        # confiável nisso, e o estado não é mais claro a respeito.
+        disponivel=resultado.disponivel,
+        origem="e",
+        erro=None,
+    )
 
 
 def cabecalhos_de(url: str, user_agent_padrao: str) -> dict[str, str]:

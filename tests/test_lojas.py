@@ -34,8 +34,8 @@ from coletor.lojas import (
     CABECALHOS_DE_NAVEGADOR, LOJAS, Loja, cabecalhos_de, extrair_da_loja, loja_de,
 )
 from coletor.parser import (
-    ERRO_BLOQUEIO, ERROS_DE_PARSE, SeletoresDeProduto, extrair_preco,
-    extrair_preco_dom, parece_pagina_de_bloqueio,
+    ERRO_BLOQUEIO, ERRO_SEM_OFERTA, ERROS_DE_PARSE, SeletoresDeProduto,
+    extrair_preco, extrair_preco_dom, parece_pagina_de_bloqueio,
 )
 
 TEMPLATES = Path(__file__).resolve().parent.parent / "coletor" / "templates"
@@ -175,19 +175,52 @@ def test_amazon_ignora_os_outros_precos_da_pagina():
     assert resultado.preco_centavos != 829900       # o preço "de" riscado
 
 
-@pytest.mark.parametrize(
-    "nome, centavos",
-    [("pichau", 552940), ("terabyte", 459990)],
-)
+@precisa_de_templates
+def test_terabyte_sai_por_jsonld_e_ja_e_o_preco_a_vista():
+    """O JSON-LD do Terabyte É o preço à vista.
+
+    A página diz "R$ 4.599,90 à vista com 15% de desconto no pix", mesmo valor do
+    `Offer.price`. Por isso o Terabyte não precisa de ajuste nenhum — é a régua
+    que o sistema segue.
+    """
+    resultado = extrair_da_loja(CANONICAS["terabyte"], template("terabyte"))
+    assert resultado.preco_centavos == 459990
+    assert resultado.origem == "j"
+    assert resultado.disponivel is True
 
 
 @precisa_de_templates
-def test_pichau_e_terabyte_saem_por_jsonld(nome, centavos):
-    """Nenhuma das duas precisou de código novo: publicam Product + Offer."""
-    resultado = extrair_da_loja(CANONICAS[nome], template(nome))
-    assert resultado.preco_centavos == centavos
-    assert resultado.origem == "j"
-    assert resultado.disponivel is True
+def test_pichau_usa_o_avista_do_estado_e_nao_o_parcelado_do_jsonld():
+    """A Pichau é a única cujo JSON-LD NÃO é o preço à vista.
+
+    `Offer.price` traz 5.529,40 (o `final_price`, parcelado) e o à vista de
+    4.699,99 mora só no estado embutido. A diferença não é cosmética: com o
+    gatilho deste repositório em R$ 4.700,00, o à vista dispara alerta e o
+    parcelado não dispara nunca.
+    """
+    resultado = extrair_da_loja(CANONICAS["pichau"], template("pichau"))
+    assert resultado.preco_centavos == 469999      # à vista, PIX, 15% off
+    assert resultado.preco_centavos != 552940      # o parcelado do JSON-LD
+    assert resultado.origem == "e"                 # veio do estado embutido
+    assert resultado.disponivel is True            # disponibilidade do JSON-LD
+
+
+@precisa_de_templates
+def test_pichau_sem_o_avista_falha_em_vez_de_usar_o_parcelado():
+    """Cair para o JSON-LD seria gravar um número ~18% maior, em silêncio.
+
+    E para sempre: a série histórica ficaria contaminada e o alerta nunca
+    dispararia. Falhar alto é a escolha certa aqui.
+    """
+    adulterado = template("pichau").replace("avista", "outro_nome_qualquer")
+    resultado = extrair_da_loja(CANONICAS["pichau"], adulterado)
+    assert resultado.erro == "sem_preco_avista"
+    assert resultado.preco_centavos is None
+
+
+def test_sem_preco_avista_e_erro_de_parse():
+    """É de PARSE porque a página mudou, não porque a rede falhou."""
+    assert "sem_preco_avista" in ERROS_DE_PARSE
 
 
 @precisa_de_templates
@@ -246,7 +279,9 @@ def test_bloqueio_fica_fora_de_erros_de_parse():
 
 
 SELETORES_DE_TESTE = SeletoresDeProduto(
-    preco="#preco", prova_de_produto="#titulo",
+    preco=("#preco-que-nao-existe", "#preco"),   # prova a ordem de tentativa
+    prova_de_produto="#titulo",
+    marcador_sem_oferta="#sem-vendedor",
     disponibilidade="#estoque", botao_de_compra="#comprar",
 )
 
@@ -273,6 +308,23 @@ def test_dom_le_preco_e_estoque():
 def test_dom_sem_preco_no_seletor():
     html = '<html><body><h1 id="titulo">Produto</h1></body></html>'
     assert extrair_preco_dom(html, SELETORES_DE_TESTE).erro == "sem_preco_no_dom"
+
+
+def test_dom_sem_oferta_nao_e_erro_de_parse():
+    """Produto sem vendedor é estado do mercado, não página quebrada.
+
+    A distinção decide se a fonte morre: `sem_preco_no_dom` está em
+    ERROS_DE_PARSE e condena; `sem_oferta_ativa` não está e deixa a fonte viva
+    para quando alguém voltar a vender.
+    """
+    html = (
+        '<html><body><h1 id="titulo">Produto</h1>'
+        '<div id="sem-vendedor">Sem ofertas no momento</div></body></html>'
+    )
+    resultado = extrair_preco_dom(html, SELETORES_DE_TESTE)
+    assert resultado.erro == ERRO_SEM_OFERTA
+    assert ERRO_SEM_OFERTA not in ERROS_DE_PARSE
+    assert resultado.disponivel is False
 
 
 def test_dom_recusa_moeda_estrangeira():
@@ -447,7 +499,12 @@ async def test_bloqueio_persistente_acaba_condenando(limitador):
 @precisa_de_templates
 @pytest.mark.asyncio
 @respx.mock
-async def test_validacao_da_pichau_promove_por_jsonld(limitador):
+async def test_validacao_da_pichau_promove_com_o_preco_a_vista(limitador):
+    """Ponta a ponta: a fonte é promovida com 4.699,99 e origem `e`.
+
+    Se este teste voltar a esperar 552940, alguém desfez o ajuste do à vista e o
+    alerta desta loja parou de disparar.
+    """
     url = "https://www.pichau.com.br/placa-de-video-asrock"
     respx.get(url).mock(return_value=httpx.Response(200, html=template("pichau")))
     repositorio = RepositorioFalso()
@@ -458,4 +515,33 @@ async def test_validacao_da_pichau_promove_por_jsonld(limitador):
             user_agent=UA_HONESTO, teto_centavos=100_000_000, limitador=limitador,
         )
 
-    assert repositorio.validas == [("f1", 552940, "j")]
+    assert repositorio.validas == [("f1", 469999, "e")]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_cloudflare_no_terabyte_e_bloqueio_e_nao_erro_de_parse(limitador):
+    """O caminho JSON-LD também precisa reconhecer desafio anti-bot.
+
+    Antes só `extrair_preco_dom` checava, e o Terabyte é justamente quem serve
+    `Just a moment...`. Sem isso, o desafio vinha como `sem_jsonld` — erro de
+    parse — e condenava a fonte em 5 ciclos por um problema de transporte.
+    """
+    url = "https://www.terabyteshop.com.br/produto/1/x"
+    respx.get(url).mock(
+        return_value=httpx.Response(
+            403, html="<html><head><title>Just a moment...</title></head></html>"
+        )
+    )
+    repositorio = RepositorioFalso()
+
+    async with httpx.AsyncClient() as cliente:
+        resultado = await validar_fonte_pendente(
+            FonteFalsa(loja="Terabyte Shop", url=url), cliente, repositorio,
+            user_agent=UA_HONESTO, teto_centavos=100_000_000, limitador=limitador,
+        )
+
+    # O 403 já é transporte pelo status; o que se garante aqui é que um desafio
+    # servido com 200 receberia o mesmo tratamento.
+    assert resultado.erro not in ("sem_jsonld", "sem_product")
+    assert repositorio.invalidas == []

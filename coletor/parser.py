@@ -11,6 +11,7 @@ em nenhum ponto do caminho do preço — ver `normalizar_para_centavos`.
 import html as entidades_html
 import json
 import logging
+import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
@@ -40,7 +41,7 @@ MOEDA_ACEITA = "BRL"
 # dois, senão condena uma URL boa porque a loja bloqueou o IP do runner.
 ERROS_DE_PARSE = frozenset(
     {"sem_jsonld", "sem_product", "sem_offers", "preco_invalido", "moeda_nao_suportada",
-     "sem_preco_no_dom"}
+     "sem_preco_no_dom", "sem_preco_avista"}
 )
 
 # `pagina_de_bloqueio` fica DE FORA de ERROS_DE_PARSE de propósito. A página é
@@ -49,6 +50,12 @@ ERROS_DE_PARSE = frozenset(
 # como parse condenaria uma URL boa depois de 5 ciclos; como transporte, a fonte
 # sobrevive até a loja voltar a responder.
 ERRO_BLOQUEIO = "pagina_de_bloqueio"
+
+# Também fora de ERROS_DE_PARSE, e por um motivo diferente: a página está
+# perfeita e a URL está certa — o produto é que não tem vendedor neste instante.
+# Condenar a fonte por isso seria punir o usuário por uma decisão do mercado. A
+# fonte segue viva e volta a ler sozinha quando alguém voltar a vender.
+ERRO_SEM_OFERTA = "sem_oferta_ativa"
 
 SELETOR_JSONLD = 'script[type="application/ld+json"]'
 
@@ -88,8 +95,9 @@ class ResultadoExtracao:
     preco_centavos: int | None
     moeda: str | None
     disponivel: bool
-    # j jsonld · g opengraph · m microdata · d seletores de DOM
-    origem: Literal["j", "g", "m", "d"] | None
+    # j jsonld · g opengraph · m microdata · d seletores de DOM ·
+    # e estado JSON embutido na página
+    origem: Literal["j", "g", "m", "d", "e"] | None
     erro: str | None  # preenchido apenas quando preco_centavos is None
 
 
@@ -130,8 +138,14 @@ class SeletoresDeProduto:
     Com a prova, o erro é `pagina_de_bloqueio` e a fonte sobrevive.
     """
 
-    preco: str
+    # Vários seletores, tentados em ordem: a Amazon tem mais de um layout de
+    # bloco de preço, e o primeiro que casar vale.
+    preco: tuple[str, ...]
     prova_de_produto: str
+    # Marcador de "produto existe, ninguém vendendo". Quando ele está presente e
+    # não há preço, o resultado é ERRO_SEM_OFERTA em vez de erro de parse — a
+    # diferença entre "a página mudou" e "o produto está sem vendedor".
+    marcador_sem_oferta: str | None = None
     preco_tabela: str | None = None
     disponibilidade: str | None = None
     # Presença do botão de compra é sinal POSITIVO de estoque. Vale mais que o
@@ -349,8 +363,19 @@ def extrair_preco_dom(
     if arvore.css_first(seletores.prova_de_produto) is None:
         return ResultadoExtracao(None, None, False, None, ERRO_BLOQUEIO)
 
-    bruto = _texto_do_seletor(arvore, seletores.preco, None)
+    bruto = None
+    for seletor in seletores.preco:
+        bruto = _texto_do_seletor(arvore, seletor, None)
+        if bruto:
+            break
+
     if not bruto:
+        # Sem preço: antes de culpar o layout, checar se a loja está dizendo que
+        # não há oferta. São diagnósticos opostos e só um condena a fonte.
+        if seletores.marcador_sem_oferta and arvore.css_first(
+            seletores.marcador_sem_oferta
+        ) is not None:
+            return ResultadoExtracao(None, None, False, None, ERRO_SEM_OFERTA)
         return ResultadoExtracao(None, None, False, None, "sem_preco_no_dom")
 
     if not _confere_moeda(bruto, seletores.marcadores_de_moeda):
@@ -371,6 +396,30 @@ def extrair_preco_dom(
         origem="d",
         erro=None,
     )
+
+
+def extrair_preco_do_estado(
+    html: str, padrao: str, *, teto_centavos: int = TETO_CENTAVOS
+) -> int | None:
+    """Preço a partir do estado JSON que a página embute, por expressão regular.
+
+    Terceiro caminho, e o mais estreito dos três. Existe porque a Pichau publica
+    o preço à vista APENAS no estado serializado — ele não chega ao DOM
+    renderizado, então não há seletor de CSS que o alcance, e o JSON-LD dela traz
+    outro número (o parcelado).
+
+    Regex e não `json.loads` de propósito: o estado vem escapado dentro de uma
+    string JSON (`\\"avista\\":4699.99`), aninhado em vários níveis de uma árvore
+    de framework. Desserializar tudo para chegar a uma chave seria caro e frágil
+    de um jeito diferente; casar a CHAVE pelo nome é frágil de um jeito honesto e
+    fácil de consertar.
+
+    `padrao` precisa ter exatamente um grupo de captura, com o número.
+    """
+    achado = re.search(padrao, html or "")
+    if achado is None:
+        return None
+    return normalizar_para_centavos(achado.group(1), teto_centavos=teto_centavos)
 
 
 def _confere_moeda(texto: str, marcadores: tuple[str, ...]) -> bool:

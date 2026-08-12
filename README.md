@@ -147,6 +147,59 @@ não por `curl`. **A Amazon acertou um produto DIFERENTE da captura** (ASRock RX
 9070, contra a ASUS RTX 5070 Ti do template), o que é a prova que interessa: os
 seletores não estão viciados em uma página só.
 
+### O número que o sistema persegue é o PREÇO À VISTA
+
+Medido no mesmo produto (ASRock RX 9070 XT) nas quatro lojas:
+
+| Loja | O que lemos | É o à vista? |
+|---|---|---|
+| KaBuM | 5.199,99 (JSON-LD) | ✅ a página diz "À vista no PIX com 15% de desconto" |
+| Terabyte | 4.599,90 (JSON-LD) | ✅ "à vista com 15% de desconto no pix" |
+| Pichau | ~~5.529,40~~ → **4.699,99** | ⚠️ precisou de ajuste, ver abaixo |
+| Amazon | 5.830,53 (DOM) | ❌ há "5% off à vista no Pix", mas só como badge |
+
+Duas de três já entregavam o preço com desconto no JSON-LD, então essa é a régua:
+**é o que se paga de fato**.
+
+**A Pichau é a exceção.** O `Offer.price` dela traz o `final_price` (parcelado) e
+o à vista mora só no estado JSON embutido — não chega ao DOM renderizado, então
+nenhum seletor de CSS o alcança. Daí `extrair_preco_do_estado` e
+`PADRAO_AVISTA_PICHAU`, e a origem `e` no histórico.
+
+A diferença não é cosmética. Com o gatilho deste repositório em **R$ 4.700,00**:
+o à vista de R$ 4.699,99 **dispara alerta**; o parcelado de R$ 5.529,40 **não
+dispara nunca**. Era um alerta sendo engolido em silêncio.
+
+Por isso, se a chave `avista` sumir da página, a fonte **falha** com
+`sem_preco_avista` em vez de cair para o preço do JSON-LD. Cair seria gravar um
+número ~18% maior na série histórica, para sempre, sem ninguém notar.
+
+**A Amazon fica ~5% acima da própria régua**, e isso é desvio conhecido e
+limitado, não bug: a loja não publica o valor com desconto em lugar nenhum.
+Consequência prática: numa disputa apertada, a Amazon parece até 5% mais cara do
+que é.
+
+### Três erros que NÃO condenam a fonte
+
+`ERROS_DE_PARSE` é o conjunto que diz "a página é ilegível, insistir não muda
+nada" — e quem cai nele é marcado inválido. Três casos ficam de fora de
+propósito, porque em todos a URL está certa:
+
+| Erro | O que é | Por que fica de fora |
+|---|---|---|
+| `http_403`, `timeout`, … | transporte | a loja bloqueou o IP; pode voltar |
+| `pagina_de_bloqueio` | desafio anti-bot servido como página | a Amazon faz isso com **HTTP 200** e corpo grande; o Terabyte serve `Just a moment...` do Cloudflare |
+| `sem_oferta_ativa` | produto existe, ninguém vendendo | é decisão do mercado, não defeito da URL |
+
+A detecção de bloqueio roda em **todas** as estratégias, não só na de DOM — foi
+um furo corrigido depois de notar que o Cloudflare do Terabyte chegaria como
+`sem_jsonld`, que é erro de parse e condenaria a fonte em 5 ciclos.
+
+O `sem_oferta_ativa` veio de um caso real: uma URL da Amazon respondeu 1,1 MB com
+`#productTitle` presente, **zero bloco de preço** e o marcador
+`#unqualifiedBuyBox`. Antes isso virava `sem_preco_no_dom` e a fonte era
+condenada como se a URL estivesse errada.
+
 As capturas ficam em `coletor/templates/`, e são fixture congelada pela mesma
 regra de `tests/fixtures/`: teste vermelho ali é a notícia, não o problema.
 
@@ -277,7 +330,7 @@ Bucketing existe porque um documento por leitura faria o gráfico de 1 ano custa
 Chaves curtas no array `leituras` porque o nome do campo é cobrado em
 armazenamento **em cada entrada**: `t` instante, `p` preço em centavos (`null` na
 falha), `d` disponível, `s` suspeito, `o` origem (`j` jsonld / `d` seletor de DOM
-(Amazon) / `g` opengraph /
+(Amazon) / `e` estado JSON embutido (Pichau, preço à vista) / `g` opengraph /
 `m` microdata), `e` motivo do erro (só quando houve falha).
 
 `soma` e `n` em vez de `media` para que a média seja recalculável de forma
@@ -603,10 +656,19 @@ execução. Ver o aviso na seção de lojas.
   diferente. Portão: disparar o `workflow_dispatch` e ler o log. Se vier
   `pagina_de_bloqueio` para a Amazon, o diagnóstico já está certo — é bloqueio,
   não parser.
-- **Acompanhar a Pichau por alguns ciclos.** Ela alternou 200 e 403 com 60s de
-  intervalo. O desenho aguenta (403 é transporte, 5 falhas seguidas para
-  desligar), mas se ela ficar mais errando que acertando, a série histórica dela
-  fica cheia de buracos e vale reconsiderar se compensa mantê-la.
+- **A Pichau está em `falhasSeguidas=4` — uma de ser desligada.** Depois do
+  primeiro acerto (200), veio uma sequência de `http_403`. O desenho aguenta,
+  mas se ela ficar mais errando que acertando, a série histórica fica cheia de
+  buracos e vale reconsiderar se compensa mantê-la.
+- **O ajuste do preço à vista da Pichau nunca rodou contra a página ao vivo.**
+  Está verificado contra a captura (4.699,99, origem `e`), e é só isso: todas as
+  buscas ao vivo desde então tomaram 403, então o caminho completo
+  busca → estado → centavos ainda não foi exercitado de ponta a ponta com HTML
+  fresco.
+- **`sem_oferta_ativa` da Amazon é um estado, não um conserto.** A URL cadastrada
+  hoje é de um produto sem vendedor. Quando alguém voltar a vender, a fonte lê
+  sozinha — mas até lá ela vai acumular falhas e, na quinta, ser desativada.
+  Se o produto ficar muito tempo sem oferta, troque a URL.
 - Conferir o consumo no console do Firebase após 48h de operação — a raspagem
   de 14 categorias escreve mais do que o desenho original previa.
 - Não existe `tests/test_main.py`: a lista de arquivos da §3 não prevê esse
