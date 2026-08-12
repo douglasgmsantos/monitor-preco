@@ -10,7 +10,8 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import { formatarBRL, paraCentavos } from "../dinheiro.js";
 import {
-  LOJAS, LOJA_OUTRA, motivoDeIncompatibilidade, hostCombinaComLoja, hostDaUrl,
+  LOJAS, motivoDeIncompatibilidade, hostCombinaComLoja, hostDaUrl,
+  lojaSugeridaPelaUrl,
 } from "../lojas.js";
 import { useProdutos } from "../composables/useProdutos.js";
 
@@ -33,13 +34,20 @@ const erro = ref("");
 const salvando = ref(false);
 
 function novaLinha({ loja = "", url = "", fonteId = "" } = {}) {
+  // Loja fora da lista fechada vem de fonte antiga (ex.: "Carrefour"). Cai como
+  // vazia: o usuário precisa escolher uma suportada para salvar, e é isso mesmo
+  // — o coletor não sabe ler as outras.
   const conhecida = LOJAS.some((l) => l.nome === loja);
-  return {
-    escolha: loja ? (conhecida ? loja : LOJA_OUTRA) : "",
-    livre: loja && !conhecida ? loja : "",
-    url,
-    fonteId,
-  };
+  return { escolha: conhecida ? loja : "", url, fonteId };
+}
+
+/** Colou a URL primeiro? O domínio já diz a loja — preenche sozinho.
+ *  Com a lista fechada o domínio determina a loja sem ambiguidade, então pedir
+ *  para o usuário repetir no dropdown o que a URL já disse é só chance de erro. */
+function aoDigitarUrl(linha) {
+  if (linha.escolha) return;
+  const sugerida = lojaSugeridaPelaUrl(linha.url);
+  if (sugerida) linha.escolha = sugerida;
 }
 
 onMounted(() => {
@@ -65,7 +73,6 @@ function aoTeclar(evento) {
 }
 
 function lojaDaLinha(linha) {
-  if (linha.escolha === LOJA_OUTRA) return linha.livre.trim();
   return linha.escolha;
 }
 
@@ -95,13 +102,15 @@ function lerFormulario() {
     const url = linha.url.trim();
     if (!loja && !url) continue;
     if (!loja) {
-      erro.value = "Escolha a loja (ou informe o nome em “Outra loja”).";
+      erro.value = "Escolha uma das lojas suportadas.";
       return null;
     }
     if (!/^https:\/\/.+/.test(url)) {
       erro.value = `URL inválida em “${loja}”: precisa começar com https://`;
       return null;
     }
+    // O motivo verificado vem ANTES da checagem de domínio: dizer por que a
+    // loja não funciona ensina mais que dizer que ela não é a escolhida.
     const incompativel = motivoDeIncompatibilidade(url);
     if (incompativel) {
       erro.value = `Essa loja não pode ser monitorada: ${incompativel}.`;
@@ -109,7 +118,8 @@ function lerFormulario() {
     }
     if (!hostCombinaComLoja(url, loja)) {
       erro.value =
-        `A URL não é de ${loja} (domínio: ${hostDaUrl(url)}). Confira a loja escolhida.`;
+        `A URL não é de ${loja} (domínio: ${hostDaUrl(url) || "desconhecido"}). ` +
+        `Só são aceitas: ${LOJAS.map((l) => l.nome).join(", ")}.`;
       return null;
     }
     lidas.push({ loja, url, fonteId: linha.fonteId || "" });
@@ -174,17 +184,19 @@ async function salvar() {
           <select v-model="linha.escolha" class="campo">
             <option value="">Selecione a loja…</option>
             <option v-for="l in LOJAS" :key="l.nome" :value="l.nome">{{ l.nome }}</option>
-            <option :value="LOJA_OUTRA">Outra loja…</option>
           </select>
-          <input v-if="linha.escolha === LOJA_OUTRA" v-model="linha.livre"
-                 class="campo" placeholder="Nome da loja">
         </div>
         <input v-model="linha.url" class="campo mono url"
-               placeholder="https://loja.com.br/produto">
+               placeholder="https://loja.com.br/produto"
+               @input="aoDigitarUrl(linha)">
         <button class="botao-discreto" title="Remover"
                 :disabled="fontes.length <= 1"
                 @click="fontes.splice(indice, 1)">✕</button>
       </div>
+      <p class="dica-lojas">
+        Só estas quatro: {{ LOJAS.map((l) => l.nome).join(", ") }}. Cole a URL da
+        página do produto — a loja é preenchida sozinha.
+      </p>
       <button class="botao-discreto mais-fonte" @click="fontes.push(novaLinha())">
         + adicionar loja
       </button>
@@ -231,6 +243,10 @@ async function salvar() {
 .celula-loja { display: grid; gap: 6px; min-width: 0; }
 .url { font-size: 13px; }
 .mais-fonte { justify-self: start; font-size: 13px; }
+.dica-lojas {
+  margin: -4px 0 0; font-size: 12px; line-height: 1.45;
+  color: var(--tinta-2);
+}
 
 .rodape {
   display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px;

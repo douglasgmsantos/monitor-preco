@@ -74,9 +74,10 @@ layout novo.
 
 - Cadastrar produto com **nome**, **preço-alvo** e **tolerância percentual**
 - Adicionar **várias fontes** (loja + URL) ao mesmo produto
-- Escolher a loja numa lista curta de lojas suportadas, ou digitar uma loja livre
-- **Recusar loja incompatível**, mostrando o motivo verificado. Sete lojas estão
-  na lista de incompatíveis, cada uma com um motivo específico ("monta a página
+- Escolher a loja numa **lista fechada de quatro**: KaBuM, Terabyte Shop, Pichau
+  e Amazon. Não existe loja de texto livre — o coletor só sabe ler estas
+- Colar a URL preenche a loja sozinho: o domínio determina a loja sem ambiguidade
+- **Recusar loja incompatível**, mostrando o motivo verificado ("monta a página
   por JavaScript", "bloqueia requisições automatizadas", e assim por diante).
   Este aviso é conteúdo, não decoração: é o que impede o usuário de achar que o
   sistema quebrou

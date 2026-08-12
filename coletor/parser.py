@@ -39,10 +39,48 @@ MOEDA_ACEITA = "BRL"
 # TRANSPORTE e pode ser transitório — quem valida fonte precisa distinguir os
 # dois, senão condena uma URL boa porque a loja bloqueou o IP do runner.
 ERROS_DE_PARSE = frozenset(
-    {"sem_jsonld", "sem_product", "sem_offers", "preco_invalido", "moeda_nao_suportada"}
+    {"sem_jsonld", "sem_product", "sem_offers", "preco_invalido", "moeda_nao_suportada",
+     "sem_preco_no_dom"}
 )
 
+# `pagina_de_bloqueio` fica DE FORA de ERROS_DE_PARSE de propósito. A página é
+# sintaticamente perfeita e não tem preço — parece erro de parse, mas é
+# transporte: a loja serviu um desafio anti-bot em vez do produto. Classificar
+# como parse condenaria uma URL boa depois de 5 ciclos; como transporte, a fonte
+# sobrevive até a loja voltar a responder.
+ERRO_BLOQUEIO = "pagina_de_bloqueio"
+
 SELETOR_JSONLD = 'script[type="application/ld+json"]'
+
+# Assinaturas de página de desafio anti-bot. Medidas em 2026-08-12 buscando as
+# três lojas de fixture a partir desta máquina:
+#
+#   Terabyte  HTTP 403, 6 KB, <title>Just a moment...</title>   (Cloudflare)
+#   Pichau    HTTP 403, 121 KB, página de bloqueio própria
+#   Amazon    HTTP 200 (!), 221 KB, sem NENHUMA marcação de produto — servida
+#             quando o User-Agent não é de navegador. É o caso perigoso: 200 com
+#             corpo grande passaria por página legítima sem esta checagem.
+MARCAS_DE_BLOQUEIO = (
+    "just a moment",
+    "checking your browser",
+    "enable javascript and cookies to continue",
+    "digite os caracteres",
+    "type the characters you see",
+    "sorry, we just need to make sure you're not a robot",
+    "request blocked",
+    "access denied",
+)
+
+
+def parece_pagina_de_bloqueio(html: str) -> bool:
+    """True quando o corpo é um desafio anti-bot em vez da página do produto.
+
+    Olha só o começo do documento: as marcas moram no `<title>` e no topo do
+    corpo, e varrer 1,2 MB de HTML legítimo atrás de uma frase seria caro para
+    nada.
+    """
+    inicio = (html or "")[:4000].lower()
+    return any(marca in inicio for marca in MARCAS_DE_BLOQUEIO)
 
 
 @dataclass(frozen=True)
@@ -50,7 +88,8 @@ class ResultadoExtracao:
     preco_centavos: int | None
     moeda: str | None
     disponivel: bool
-    origem: Literal["j", "g", "m"] | None
+    # j jsonld · g opengraph · m microdata · d seletores de DOM
+    origem: Literal["j", "g", "m", "d"] | None
     erro: str | None  # preenchido apenas quando preco_centavos is None
 
 
@@ -73,6 +112,39 @@ class ItemDeLista:
     # HTML, e aí `preco_centavos` é o de venda de verdade.
     preco_tabela_centavos: int | None = None
     imagem: str | None = None
+
+
+@dataclass(frozen=True)
+class SeletoresDeProduto:
+    """Onde achar preço e estoque na PÁGINA DE PRODUTO de uma loja sem JSON-LD.
+
+    Irmão de `SeletoresDeListagem`, e pela mesma razão: seletor é DADO. Quando a
+    loja mexe no layout, o conserto é editar a tabela em `coletor/lojas.py` e o
+    teste contra o template congelado avisa alto.
+
+    `prova_de_produto` é o campo que impede o pior modo de falha. A Amazon
+    responde **HTTP 200 com 221 KB** quando o User-Agent não é de navegador — um
+    corpo grande, bem-formado, e sem nenhuma marcação de produto. Sem uma prova
+    positiva de que a página do produto chegou, isso viraria "não achei preço",
+    a fonte acumularia 5 falhas e seria desativada como se a URL fosse ruim.
+    Com a prova, o erro é `pagina_de_bloqueio` e a fonte sobrevive.
+    """
+
+    preco: str
+    prova_de_produto: str
+    preco_tabela: str | None = None
+    disponibilidade: str | None = None
+    # Presença do botão de compra é sinal POSITIVO de estoque. Vale mais que o
+    # texto: o texto varia por região e por campanha, o botão some quando acaba.
+    botao_de_compra: str | None = None
+    marcadores_indisponivel: tuple[str, ...] = (
+        "indisponível", "indisponivel", "esgotado", "sem estoque",
+        "fora de estoque", "temporariamente sem", "avise-me",
+        "currently unavailable", "out of stock",
+    )
+    # Símbolos que provam que o número é em real. Um preço em dólar tem a mesma
+    # forma e passaria pelo normalizador como se fosse BRL.
+    marcadores_de_moeda: tuple[str, ...] = ("r$",)
 
 
 @dataclass(frozen=True)
@@ -250,6 +322,91 @@ def extrair_preco(
         origem="j",
         erro=None,
     )
+
+
+def extrair_preco_dom(
+    html: str,
+    seletores: SeletoresDeProduto,
+    *,
+    teto_centavos: int = TETO_CENTAVOS,
+) -> ResultadoExtracao:
+    """Extrai preço de uma página de produto por seletores de DOM.
+
+    Caminho para lojas que não publicam JSON-LD. Hoje só a Amazon — as outras
+    três lojas suportadas publicam, e para elas `extrair_preco` continua sendo o
+    caminho certo (contrato schema.org é estável; seletor de DOM não é).
+
+    A ordem das checagens é deliberada: bloqueio ANTES de preço. Uma página de
+    desafio anti-bot não tem preço, e diagnosticar isso como "sem preço" manda o
+    operador procurar defeito no lugar errado.
+    """
+    if parece_pagina_de_bloqueio(html):
+        return ResultadoExtracao(None, None, False, None, ERRO_BLOQUEIO)
+
+    arvore = HTMLParser(html or "")
+
+    # Prova positiva de que a página do produto chegou. Ver SeletoresDeProduto.
+    if arvore.css_first(seletores.prova_de_produto) is None:
+        return ResultadoExtracao(None, None, False, None, ERRO_BLOQUEIO)
+
+    bruto = _texto_do_seletor(arvore, seletores.preco, None)
+    if not bruto:
+        return ResultadoExtracao(None, None, False, None, "sem_preco_no_dom")
+
+    if not _confere_moeda(bruto, seletores.marcadores_de_moeda):
+        # Mesmo motivo do caminho JSON-LD: gravar um número em moeda
+        # estrangeira como se fosse real é pior do que não gravar nada.
+        return ResultadoExtracao(None, None, False, None, "moeda_nao_suportada")
+
+    centavos = normalizar_para_centavos(
+        _primeiro_valor_monetario(bruto), teto_centavos=teto_centavos
+    )
+    if centavos is None:
+        return ResultadoExtracao(None, None, False, None, "preco_invalido")
+
+    return ResultadoExtracao(
+        preco_centavos=centavos,
+        moeda=MOEDA_ACEITA,
+        disponivel=_disponibilidade_dom(arvore, seletores),
+        origem="d",
+        erro=None,
+    )
+
+
+def _confere_moeda(texto: str, marcadores: tuple[str, ...]) -> bool:
+    """True quando o texto do preço prova que o valor é em real.
+
+    Sem marcador configurado a checagem é dispensada — a loja pode publicar o
+    número puro, e nesse caso quem garante a moeda é o domínio da loja.
+    """
+    if not marcadores:
+        return True
+    minusculo = texto.lower()
+    return any(marca in minusculo for marca in marcadores)
+
+
+def _disponibilidade_dom(arvore: HTMLParser, seletores: SeletoresDeProduto) -> bool:
+    """Estoque a partir do DOM.
+
+    O texto manda quando é explícito sobre falta ("Temporariamente sem
+    estoque"), porque negação é afirmação forte. Na ausência dele, vale o botão
+    de compra: ele some quando o produto acaba, e não depende de redação.
+
+    Sem nenhum dos dois sinais, devolve True — chegamos aqui com um preço
+    válido lido da página, e afirmar indisponível contra essa evidência seria
+    inventar o oposto do que a página mostra.
+    """
+    if seletores.disponibilidade:
+        texto = _texto_do_seletor(arvore, seletores.disponibilidade, None)
+        if texto:
+            minusculo = texto.lower()
+            if any(m in minusculo for m in seletores.marcadores_indisponivel):
+                return False
+
+    if seletores.botao_de_compra:
+        return arvore.css_first(seletores.botao_de_compra) is not None
+
+    return True
 
 
 def _documentos_jsonld(arvore: HTMLParser) -> list[Any]:

@@ -18,7 +18,8 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from coletor.parser import ERROS_DE_PARSE, ResultadoExtracao, extrair_preco
+from coletor.lojas import cabecalhos_de, extrair_da_loja
+from coletor.parser import ERROS_DE_PARSE, ResultadoExtracao
 
 logger = logging.getLogger(__name__)
 
@@ -132,20 +133,26 @@ async def buscar_html(
     user_agent: str,
     dormir=asyncio.sleep,
     tentativas_extra: int = TENTATIVAS_EXTRA,
+    cabecalhos: dict[str, str] | None = None,
 ) -> tuple[str | None, str | None]:
     """Baixa a página. Devolve (html, erro) — exatamente um dos dois é None.
 
     Retenta apenas em erro de rede e 5xx. Um 404 é resposta definitiva do
     servidor: retentar só gasta o orçamento de requisições da loja.
+
+    `cabecalhos` substitui o par padrão quando a loja exige mais que um
+    User-Agent. Quem decide é `lojas.cabecalhos_de`, e hoje só a Amazon precisa:
+    com o UA honesto ela devolve 200 com uma página sem marcação de produto.
     """
     espera = ESPERA_INICIAL_SEGUNDOS
     ultimo_erro = "erro_desconhecido"
+    cabecalhos = cabecalhos or {"User-Agent": user_agent}
 
     for tentativa in range(tentativas_extra + 1):
         try:
             resposta = await cliente.get(
                 url,
-                headers={"User-Agent": user_agent},
+                headers=cabecalhos,
                 timeout=TIMEOUT_SEGUNDOS,
                 follow_redirects=True,
             )
@@ -214,13 +221,19 @@ async def coletar_fonte(
     """Coleta uma fonte e grava exatamente uma leitura, dando certo ou errado."""
     async with limitador.aguardar(fonte.url):
         html, erro_http = await buscar_html(
-            cliente, fonte.url, user_agent=user_agent, dormir=dormir
+            cliente,
+            fonte.url,
+            user_agent=user_agent,
+            dormir=dormir,
+            cabecalhos=cabecalhos_de(fonte.url, user_agent),
         )
 
     if erro_http is not None:
         resultado = ResultadoExtracao(None, None, False, None, erro_http)
     else:
-        resultado = extrair_preco(html or "", teto_centavos=teto_centavos)
+        resultado = extrair_da_loja(
+            fonte.url, html or "", teto_centavos=teto_centavos
+        )
 
     suspeito = False
     if resultado.preco_centavos is not None:
@@ -322,13 +335,19 @@ async def validar_fonte_pendente(
     """
     async with limitador.aguardar(fonte.url):
         html, erro_http = await buscar_html(
-            cliente, fonte.url, user_agent=user_agent, dormir=dormir
+            cliente,
+            fonte.url,
+            user_agent=user_agent,
+            dormir=dormir,
+            cabecalhos=cabecalhos_de(fonte.url, user_agent),
         )
 
     if erro_http is not None:
         resultado = ResultadoExtracao(None, None, False, None, erro_http)
     else:
-        resultado = extrair_preco(html or "", teto_centavos=teto_centavos)
+        resultado = extrair_da_loja(
+            fonte.url, html or "", teto_centavos=teto_centavos
+        )
 
     if resultado.preco_centavos is None:
         motivo = resultado.erro or "preco_invalido"

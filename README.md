@@ -36,10 +36,12 @@ Outros documentos: [frontend/README.md](frontend/README.md) (decisões do front)
 | — | security rules | ✅ 24 testes contra o emulador (`tests/test_rules.py`) |
 | — | raspagem de catálogo (`coletor/raspagem.py`) | ✅ 14 categorias (KaBuM via JSON-LD, Terabyte via seletores DOM); vitrine acumulativa |
 | — | front Vue "Radar" (`frontend/`) | ✅ build ok; **pendente de verificação visual e deploy** |
+| — | lista fechada + Amazon por DOM (`coletor/lojas.py`) | ✅ 38 testes contra capturas reais; **Amazon nunca rodou do runner** |
 
 ```
-205 passed, 77 skipped        # sem o emulador do Firestore (76 pulados são dele)
-281 passed, 1 skipped         # com o emulador rodando
+243 passed, 77 skipped        # sem o emulador do Firestore (76 pulados são dele)
+319 passed, 1 skipped         # com o emulador rodando
+234 passed, 86 skipped        # num clone SEM as capturas de página (ver abaixo)
 ```
 
 O ciclo foi validado ponta a ponta contra o emulador, usando uma URL real de
@@ -93,6 +95,8 @@ a vitrine — nunca o histórico, nunca o alerta.
 ```
 monitor-precos/
 ├── coletor/      coleta, raspagem, parser, alertas, notificador (Python)
+│   ├── lojas.py    registro das lojas: domínio, estratégia, cabeçalhos
+│   └── templates/  capturas das páginas de produto — FORA DO GIT, ver .gitignore
 ├── frontend/     app Vue "Radar" — o front publicado
 ├── publico/      front antigo sem build — referência e rota de retorno
 ├── tests/        pytest; fixtures congeladas de páginas reais
@@ -121,36 +125,105 @@ min/mês e o cron de 15 em 15 minutos consome mais que isso.
 
 ## Lojas suportadas
 
-Só entram lojas verificadas na página de produto real: o preço vem em
-`application/ld+json` por HTTP simples, e o User-Agent honesto do coletor
-(`MonitorPrecos/1.0`) não é bloqueado.
+**Lista fechada de quatro.** O cadastro não aceita mais loja de texto livre: a
+opção "Outra loja" deixava o usuário gravar uma URL que o coletor não sabe ler, e
+o desfecho era uma fonte que falhava cinco vezes e morria. Recusar na entrada é
+mais honesto que aceitar e desistir depois.
 
-| Loja | `price` observado | `availability` |
+A tabela vive em [coletor/lojas.py](coletor/lojas.py), espelhada em
+[frontend/src/lojas.js](frontend/src/lojas.js). O front recusa antes de gravar; o
+coletor recusa depois de buscar. As duas checagens existem porque as security
+rules não sabem validar domínio.
+
+| Loja | Estratégia | Ciclo real em 2026-08-12 |
 |---|---|---|
-| KaBuM | `3499.9` (float) | `https://schema.org/OutOfStock` |
-| Terabyte Shop | `"1789.99"` (string) | `http://schema.org/InStock` |
-| Carrefour | `9990` (int) | `http://schema.org/InStock` |
+| KaBuM | JSON-LD | ✅ R$ 4.999,99 |
+| Terabyte Shop | JSON-LD | ✅ R$ 4.799,99 |
+| Pichau | JSON-LD | ⚠️ aprovou a R$ 5.529,40 e deu `http_403` na coleta 60s depois |
+| Amazon | **seletores de DOM** | ✅ R$ 5.830,53, origem `d` |
+
+As quatro foram validadas e coletadas contra produção, do coletor de verdade —
+não por `curl`. **A Amazon acertou um produto DIFERENTE da captura** (ASRock RX
+9070, contra a ASUS RTX 5070 Ti do template), o que é a prova que interessa: os
+seletores não estão viciados em uma página só.
+
+As capturas ficam em `coletor/templates/`, e são fixture congelada pela mesma
+regra de `tests/fixtures/`: teste vermelho ali é a notícia, não o problema.
+
+### As capturas NÃO são versionadas
+
+São 2,6 MB, e ficam fora do git por isso. **O custo é real:** num clone sem elas,
+`tests/test_lojas.py` pula 9 testes e a suíte fica verde **sem ter verificado**
+os seletores da Amazon nem o JSON-LD de Pichau e Terabyte. Uma loja pode mudar o
+layout e nada avisa.
+
+Quem for mexer em [coletor/lojas.py](coletor/lojas.py) precisa delas na máquina.
+Para recriar, do navegador — não por `curl`, que a Pichau e o Terabyte recusam:
+
+1. abra a página de produto da loja no navegador;
+2. **Salvar como → Página da Web, somente HTML** (não "completa": imagens e CSS
+   não interessam e multiplicam o tamanho);
+3. salve como `coletor/templates/<loja>-produto-detalhes.html`, com `<loja>` em
+   `amazon`, `pichau` ou `terabyte`.
+
+Qualquer produto serve para Pichau e Terabyte — o teste confere o valor que
+estiver no arquivo. Para a Amazon, os testes esperam os valores desta captura
+(R$ 7.124,05 / R$ 8.299,00); trocando o produto, ajuste os números em
+`tests/test_lojas.py` **depois** de confirmar que os seletores continuam certos.
+
+### Por que a Amazon é diferente em duas coisas
+
+**Não publica JSON-LD.** Zero blocos em 1,2 MB. Daí `extrair_preco_dom` e a
+tabela `SELETORES_AMAZON`. O escopo `#corePrice_feature_div span.a-offscreen`
+não é decoração: a página tem 22 `span.a-offscreen`, e o segundo é R$ 7.499,00 —
+outro preço, de outro bloco. Sem o escopo, o coletor gravaria um número plausível
+e errado, que é a pior espécie de bug porque não parece bug.
+
+**Exige cabeçalhos de navegador.** Medido: com o User-Agent honesto ela responde
+**HTTP 200 com 221 KB e nenhuma marcação de produto** — sem título, sem preço,
+sem botão. Com UA de Chrome, 1,25 MB e tudo no lugar, idêntico à captura. Não
+existe versão honesta da página para ler; a escolha real era buscar como
+navegador ou não suportar a loja. Está registrado em `CABECALHOS_DE_NAVEGADOR`
+como decisão, não descuido — é a única exceção ao User-Agent honesto do projeto.
+
+Esse 200-sem-produto é o modo de falha perigoso, e por isso tem tratamento
+próprio: `pagina_de_bloqueio` fica **fora** de `ERROS_DE_PARSE`. A página é
+sintaticamente perfeita e não tem preço, então pareceria erro de parse — e o
+parse condena a fonte depois de 5 ciclos. Classificada como transporte, a fonte
+sobrevive até a loja voltar a responder.
 
 ### Lojas que NÃO funcionam
 
 | Loja | Motivo (verificado) |
 |---|---|
-| Amazon | não publica JSON-LD — zero blocos em 1,8 MB de HTML |
-| Mercado Livre | serve um shell de ~39 KB e monta tudo por JavaScript |
-| Magazine Luiza | HTTP 403 em **tudo**, inclusive na home, com qualquer User-Agent |
-| Pichau | responde de IP residencial, **recusa o datacenter** onde o coletor roda (HTTP 403) |
-| Americanas | responde 200, mas monta tudo por JS: home só tem `WebSite`/`Organization`, busca vem com 0 preços no HTML |
+| Mercado Livre | shell de ~39 KB montado por JavaScript; e a API oficial retém `buy_box_winner` para apps sem permissão especial |
+| Magazine Luiza / Magalu | HTTP 403 em **tudo**, inclusive na home, com qualquer User-Agent |
+| Americanas | responde 200, mas monta tudo por JS: 0 preços no HTML |
 | Submarino, Shoptime | mesma plataforma da Americanas |
+| Carrefour | publica JSON-LD, mas **nunca foi confirmada a partir do datacenter**. Saiu da lista por isso, não por defeito |
 
-O front recusa todas essas de saída. Outras lojas podem ser cadastradas em
-"Outra loja", mas só a primeira coleta dirá se a página é legível.
+### A Pichau é intermitente, e isso já apareceu
 
-> **Aviso sobre a lista acima.** A verificação inicial foi feita de um IP
-> residencial brasileiro. O coletor roda de um IP de datacenter (Azure, via
-> GitHub Actions), e lojas com anti-bot tratam os dois de forma diferente — foi
-> exatamente assim que a Pichau, aprovada em laboratório, falhou na primeira
-> execução real. **Só a produção decide quais lojas funcionam.** KaBuM, Terabyte
-> e Carrefour seguem sem confirmação em produção.
+No mesmo ciclo, com 60 segundos de intervalo: a validação recebeu **200** e leu
+R$ 5.529,40; a coleta seguinte recebeu **403**. Não é layout nem parser — é
+anti-bot reagindo à segunda requisição.
+
+O sistema tratou certo, e é para isso que a distinção existe: `http_403` é
+**transporte**, então a fonte ficou `status=ok`, `falhas=1`, sem ser condenada.
+Só cinco falhas seguidas a desligam. Se a Pichau seguir assim, ela vai oscilar
+entre ler e falhar em vez de morrer — o que é o comportamento certo para uma
+loja que às vezes responde.
+
+> **Cuidado com medição por `curl`.** Sondando as mesmas URLs por `curl` momentos
+> antes, Pichau e Terabyte devolveram 403 e o Terabyte veio com
+> `Just a moment...` (Cloudflare). Pelo `httpx` do coletor, as duas responderam
+> 200. Mesma máquina, mesmo User-Agent honesto. A diferença provável é impressão
+> digital de TLS ou estado transitório do anti-bot — mas o que importa é a regra:
+> **vale a medição do coletor de verdade, não a do `curl`.**
+>
+> E nada disso é veredito de produção. O coletor roda de IP de datacenter (Azure,
+> via GitHub Actions), e loja com anti-bot trata datacenter e residencial de
+> forma diferente. **Só a produção decide quais lojas funcionam.**
 
 ---
 
@@ -203,7 +276,8 @@ Bucketing existe porque um documento por leitura faria o gráfico de 1 ano custa
 
 Chaves curtas no array `leituras` porque o nome do campo é cobrado em
 armazenamento **em cada entrada**: `t` instante, `p` preço em centavos (`null` na
-falha), `d` disponível, `s` suspeito, `o` origem (`j` jsonld / `g` opengraph /
+falha), `d` disponível, `s` suspeito, `o` origem (`j` jsonld / `d` seletor de DOM
+(Amazon) / `g` opengraph /
 `m` microdata), `e` motivo do erro (só quando houve falha).
 
 `soma` e `n` em vez de `media` para que a média seja recalculável de forma
@@ -265,8 +339,9 @@ duas abas — **Monitoramento** e **Catálogo** — com o cadastro em modal:
 - **Descoberta**: sugestões do catálogo ainda não acompanhadas
 - **Catálogo**: vitrine completa com filtro por categoria, busca, ordenação e
   paginação; acompanhar um item pré-preenche o cadastro
-- **Cadastrar/editar** produto com N pares loja/URL em modal, com a recusa de
-  loja incompatível explicando o motivo verificado
+- **Cadastrar/editar** produto com N pares loja/URL em modal. A loja vem de uma
+  lista fechada de quatro e é preenchida sozinha ao colar a URL; loja
+  incompatível é recusada com o motivo verificado
 - **Pausar / retomar** coleta sem perder histórico
 - **Excluir** produto, com cascata manual (ver abaixo)
 - **Tentar de novo** numa fonte que falhou
@@ -522,6 +597,16 @@ execução. Ver o aviso na seção de lojas.
 - **Paridade do gráfico, se fizer falta no uso:** o front novo mostra só a
   flutuação de 30 dias; os períodos 1d/1s/1a, a escala em variação % e a
   comparação multi-produto do front antigo não foram portados.
+- **As quatro lojas nunca foram buscadas DO RUNNER.** O ciclo real de 2026-08-12
+  rodou desta máquina e aprovou as quatro (ver tabela acima), mas o runner é IP
+  de datacenter e a Amazon é justamente o tipo de loja que trata os dois de forma
+  diferente. Portão: disparar o `workflow_dispatch` e ler o log. Se vier
+  `pagina_de_bloqueio` para a Amazon, o diagnóstico já está certo — é bloqueio,
+  não parser.
+- **Acompanhar a Pichau por alguns ciclos.** Ela alternou 200 e 403 com 60s de
+  intervalo. O desenho aguenta (403 é transporte, 5 falhas seguidas para
+  desligar), mas se ela ficar mais errando que acertando, a série histórica dela
+  fica cheia de buracos e vale reconsiderar se compensa mantê-la.
 - Conferir o consumo no console do Firebase após 48h de operação — a raspagem
   de 14 categorias escreve mais do que o desenho original previa.
 - Não existe `tests/test_main.py`: a lista de arquivos da §3 não prevê esse

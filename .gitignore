@@ -21,3 +21,17 @@ __pycache__/
 firebase-debug.log
 firestore-debug.log
 ui-debug.log
+
+# Node
+node_modules/
+frontend/dist/
+
+# Capturas das páginas de produto (2,6 MB). Fora do git por tamanho.
+#
+# CUSTO ACEITO: `tests/test_lojas.py` PULA os testes que dependem delas quando
+# não estão presentes. Num clone novo a suíte fica verde sem verificar os
+# seletores da Amazon nem o JSON-LD de Pichau e Terabyte — ou seja, uma loja
+# pode mudar o layout e nada avisa. Quem for mexer em `coletor/lojas.py`
+# precisa das capturas na máquina. Como recriar está no README, seção
+# "Lojas suportadas".
+coletor/templates/
