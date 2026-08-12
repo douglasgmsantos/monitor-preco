@@ -1,0 +1,156 @@
+/* ---------------------------------------------------------------------------
+   Tokens do design "Radar". Claro é o padrão; escuro é escolhido, não um
+   inverso automático. A escolha explícita (data-theme) vence o sistema nos
+   dois sentidos — mesma regra do front antigo.
+   --------------------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+  --plano:          #ffffff;   /* fundo da página */
+  --superficie:     #ffffff;   /* fundo de cartão */
+  --suave:          #f4f4f2;   /* fundo de input, thumb de imagem, faixas */
+  --tinta:          #111110;
+  --tinta-2:        #5b5a56;
+  --tinta-fraca:    #97958f;
+  --borda:          #e8e7e3;
+  --primario:       #161616;   /* botão preto do desenho */
+  --primario-texto: #ffffff;
+  --bom:            #17a34a;
+  --atencao:        #d97a08;
+  --critico:        #dc4040;
+  --critico-fundo:  #fdecec;
+  --atencao-fundo:  #fdf3e4;
+  --neutro-fundo:   #f0f0ee;
+  --barra:          #e7e7e4;   /* barras do gráfico de flutuação */
+  --sombra:         0 1px 2px rgba(17, 17, 16, 0.04);
+  --fonte-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --plano: #101010; --superficie: #181817; --suave: #232322;
+    --tinta: #f5f5f3; --tinta-2: #b3b1ab; --tinta-fraca: #7c7a74;
+    --borda: #2b2b29;
+    --primario: #f0f0ee; --primario-texto: #131312;
+    --bom: #2fbf62; --atencao: #e79b3a; --critico: #e56565;
+    --critico-fundo: #3a2020; --atencao-fundo: #382b18; --neutro-fundo: #262625;
+    --barra: #333331;
+    --sombra: none;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --plano: #101010; --superficie: #181817; --suave: #232322;
+  --tinta: #f5f5f3; --tinta-2: #b3b1ab; --tinta-fraca: #7c7a74;
+  --borda: #2b2b29;
+  --primario: #f0f0ee; --primario-texto: #131312;
+  --bom: #2fbf62; --atencao: #e79b3a; --critico: #e56565;
+  --critico-fundo: #3a2020; --atencao-fundo: #382b18; --neutro-fundo: #262625;
+  --barra: #333331;
+  --sombra: none;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--plano);
+  color: var(--tinta);
+  font: 15px/1.5 "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- tipografia compartilhada ------------------------------------------- */
+
+.olho {
+  /* o "eyebrow" do desenho: DESCOBERTA, SEU RADAR, ANÁLISE DETALHADA */
+  font-size: 12px; font-weight: 600; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--tinta-fraca);
+  margin: 0 0 6px;
+}
+.titulo-secao {
+  font-size: 27px; font-weight: 650; letter-spacing: -0.02em;
+  margin: 0 0 20px; line-height: 1.2;
+}
+.mono { font-family: var(--fonte-mono); font-variant-numeric: tabular-nums; }
+
+/* ---- controles ----------------------------------------------------------- */
+
+button, input, select {
+  font: inherit; color: var(--tinta);
+  background: var(--superficie);
+  border: 1px solid var(--borda);
+  border-radius: 10px; padding: 9px 13px;
+}
+button { cursor: pointer; }
+button:hover { background: var(--suave); }
+
+.botao-primario {
+  background: var(--primario); border-color: var(--primario);
+  color: var(--primario-texto);
+  font-weight: 600; border-radius: 12px; padding: 10px 18px;
+}
+.botao-primario:hover { background: var(--primario); filter: brightness(1.12); }
+.botao-primario:disabled { opacity: 0.55; cursor: default; }
+
+.botao-discreto {
+  border: none; background: none; color: var(--tinta-2); padding: 6px 10px;
+}
+.botao-discreto:hover { color: var(--tinta); background: var(--suave); }
+.botao-discreto.perigo { color: var(--critico); }
+.botao-discreto.perigo:hover { color: var(--critico); background: var(--critico-fundo); }
+
+.campo {
+  width: 100%;
+  background: var(--suave); border: 1px solid transparent;
+  border-radius: 12px; padding: 13px 15px;
+}
+.campo:focus { outline: none; border-color: var(--tinta-fraca); }
+.rotulo-campo {
+  display: block; font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--tinta-2); margin: 0 0 7px;
+}
+
+/* ---- selos de estado ------------------------------------------------------
+   Estado nunca é só cor: sempre fundo + rótulo textual em caixa alta. */
+
+.selo {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 4px 10px; border-radius: 8px; white-space: nowrap;
+}
+.selo.alerta    { background: var(--critico-fundo); color: var(--critico); }
+.selo.aguardando{ background: var(--atencao-fundo); color: var(--atencao); }
+.selo.neutro    { background: var(--neutro-fundo); color: var(--tinta-2); }
+
+.ponto {
+  width: 7px; height: 7px; border-radius: 50%; flex: none; display: inline-block;
+}
+.ponto.bom     { background: var(--bom); }
+.ponto.atencao { background: var(--atencao); }
+.ponto.critico { background: var(--critico); }
+.ponto.fraco   { background: var(--tinta-fraca); }
+
+/* ---- cartões e utilidades ------------------------------------------------ */
+
+.cartao {
+  background: var(--superficie);
+  border: 1px solid var(--borda);
+  border-radius: 18px;
+  box-shadow: var(--sombra);
+}
+
+.erro { color: var(--critico); font-size: 13px; margin-top: 10px; }
+.vazio {
+  color: var(--tinta-2); font-size: 14px;
+  border: 1px dashed var(--borda); border-radius: 14px;
+  padding: 28px 20px; text-align: center;
+}
+.dica { color: var(--tinta-fraca); font-size: 13px; }
+
+a { color: inherit; }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--borda); }
+th { color: var(--tinta-2); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+td.num, th.num { text-align: right; font-family: var(--fonte-mono); font-variant-numeric: tabular-nums; }
