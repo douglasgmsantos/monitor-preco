@@ -114,8 +114,8 @@ async function excluir() {
 </template>
 
 <style scoped>
-.analise { margin-top: 56px; scroll-margin-top: 80px; }
-.fontes { display: grid; gap: 10px; max-width: 880px; }
+.analise { margin-top: 30px; scroll-margin-top: 80px; }
+.fontes { display: grid; gap: 10px; }
 .acoes-produto { display: flex; gap: 6px; flex-wrap: wrap; margin: 14px 0 0; }
 .acoes-produto button { font-size: 13px; }
 

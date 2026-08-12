@@ -318,8 +318,9 @@ canto da tela sem aviso.
 **7. Tratar bem os estados chatos.** Vazio, carregando, fonte quebrada, primeira
 vez sem nenhum produto. Hoje são parágrafos de texto cinza.
 
-**8. Dar filtro e ordenação à lista de acompanhados.** O catálogo tem; a lista
-principal não. Com trinta produtos vira uma parede.
+**8. ~~Dar filtro~~ e ordenação à lista de acompanhados.** O filtro por nome ou
+loja e a paginação (4 por página) já entraram. Falta **ordenação** — o catálogo
+tem, a lista principal não.
 
 ### O que eu gostaria de receber
 

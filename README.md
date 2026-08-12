@@ -383,7 +383,8 @@ O front publicado é o app Vue "Radar" ([frontend/](frontend/)), organizado em
 duas abas — **Monitoramento** e **Catálogo** — com o cadastro em modal:
 
 - **Login** com e-mail/senha e Google
-- **Monitoramento**: cartões com preço atual, **média de 30 dias** (a primeira
+- **Monitoramento**: busca por nome **ou loja** e paginação de 4 em 4; cartões
+  com preço atual, **média de 30 dias** (a primeira
   vez que o número que dispara o alerta "abaixo da média" aparece em tela),
   menor preço do período e estado (`alerta de preço baixo` / `monitorando` /
   `aguardando primeira coleta` / `pausado`)
