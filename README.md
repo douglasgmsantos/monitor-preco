@@ -5,9 +5,20 @@ produto com preço-alvo, tolerância e as URLs onde ele é vendido. Um coletor
 agendado extrai o preço do bloco `application/ld+json` das páginas, grava a série
 histórica e avisa no Telegram quando o preço entra na faixa aceitável.
 
-Não há busca nem descoberta de produtos: você informa as URLs.
+Além do acompanhamento por URL, existe um **catálogo de descoberta**: o coletor
+varre páginas de listagem das lojas verificadas (14 categorias hoje) e monta uma
+vitrine para achar o que cadastrar — o preço-alvo é a única informação que a
+vitrine não tem.
+
+A interface é o app Vue em [frontend/](frontend/) (visual "Radar"). O site é
+https://report-price.web.app — **o que está no ar ainda é o front antigo**; o
+Vue entra no próximo `firebase deploy --only hosting`. O front antigo, sem
+build, segue em `publico/` como referência e rota de retorno.
 
 **Custo: R$ 0,00.** Nenhuma peça exige cartão de crédito.
+
+Outros documentos: [frontend/README.md](frontend/README.md) (decisões do front),
+[PROPOSTA.md](PROPOSTA.md) (briefing do produto para redesenho de layout).
 
 ---
 
@@ -21,11 +32,14 @@ Não há busca nem descoberta de produtos: você informa as URLs.
 | 3 | `coletor/coleta.py` | ✅ 24 testes com `respx` |
 | 4 | `coletor/alertas.py`, `notificador.py` | ✅ 31 testes, sem rede |
 | 5 | `coletor/main.py`, workflow do Actions | ✅ em produção; 1 execução bem-sucedida registrada |
-| 6 | front (`publico/`) | ✅ publicado em https://report-price.web.app |
+| 6 | front (`publico/`) | ✅ substituído pelo Vue; mantido como referência |
 | — | security rules | ✅ 24 testes contra o emulador (`tests/test_rules.py`) |
+| — | raspagem de catálogo (`coletor/raspagem.py`) | ✅ 14 categorias (KaBuM via JSON-LD, Terabyte via seletores DOM); vitrine acumulativa |
+| — | front Vue "Radar" (`frontend/`) | ✅ build ok; **pendente de verificação visual e deploy** |
 
 ```
-208 passed, 1 skipped
+205 passed, 77 skipped        # sem o emulador do Firestore (76 pulados são dele)
+281 passed, 1 skipped         # com o emulador rodando
 ```
 
 O ciclo foi validado ponta a ponta contra o emulador, usando uma URL real de
@@ -33,8 +47,10 @@ loja: fonte pendente → coleta HTTP → parser → buckets no Firestore → má
 estados → mensagem formatada. A janela de coleta bloqueia execução fora de hora e o
 cooldown de 24h cala a renotificação, ambos verificados.
 
-O portão da §13 para esta fase é um `workflow_dispatch` real no GitHub, que
-depende dos secrets estarem cadastrados e do workflow estar na branch padrão.
+O portão da §13 (execução real via `workflow_dispatch`) já foi cruzado — a
+tabela acima registra a execução em produção. O pendente de agora é outro:
+verificar o front Vue no navegador e fazer o primeiro deploy dele (ver
+[O que falta](#o-que-falta)).
 
 ---
 
@@ -42,14 +58,16 @@ depende dos secrets estarem cadastrados e do workflow estar na branch padrão.
 
 ```
 ┌─────────────────┐   Auth + leitura direta   ┌──────────────────┐
-│  Front estático │◄─────────────────────────►│    Firestore     │
+│  Front (Vue 3)  │◄─────────────────────────►│    Firestore     │
 │ Firebase Hosting│      (security rules)     │     (Spark)      │
 └─────────────────┘                           └────────▲─────────┘
                                                        │ Admin SDK
                                               ┌────────┴─────────┐
                                               │ GitHub Actions   │
                                               │ cron */15min     │
-                                              │  → lojas (HTTP)  │
+                                              │  → coleta (URLs) │
+                                              │  → raspagem      │
+                                              │    (catálogo)    │
                                               │  → Telegram      │
                                               └──────────────────┘
 ```
@@ -57,6 +75,29 @@ depende dos secrets estarem cadastrados e do workflow estar na branch padrão.
 Não existe servidor de API. O front autentica no Firebase Auth e lê o Firestore
 direto, contido pelas security rules. O coletor roda no GitHub Actions com o
 Admin SDK, que ignora as rules.
+
+O front é buildado (Vue + Vite) mas continua **estático**: o `predeploy` em
+`firebase.json` gera `frontend/dist` e o Hosting serve arquivos, como sempre.
+
+Dois processos no mesmo ciclo do Actions, com cadências próprias:
+
+| Processo | Cadência | Propósito |
+|---|---|---|
+| **coleta** | 3 h | preço real, histórico e alerta das fontes que você segue |
+| **raspagem** | 24 h | descobrir o que existe nas listagens e montar a vitrine |
+
+A separação é factual, não organizacional: o preço da LISTAGEM é o de tabela
+(medido de 10% a 31% acima do preço da página do produto), então ele alimenta só
+a vitrine — nunca o histórico, nunca o alerta.
+
+```
+monitor-precos/
+├── coletor/      coleta, raspagem, parser, alertas, notificador (Python)
+├── frontend/     app Vue "Radar" — o front publicado
+├── publico/      front antigo sem build — referência e rota de retorno
+├── tests/        pytest; fixtures congeladas de páginas reais
+└── firestore.rules / firestore.indexes.json / firebase.json
+```
 
 ### Por que cada peça é gratuita
 
@@ -134,7 +175,22 @@ usuarios/{uid}/produtos/{produtoId}
 
 sistema/controle                        GLOBAL (coleção raiz)
     ultimaColetaEm
+sistema/controle_raspagem
+    ultimaRaspagemEm
+
+catalogo/{loja}                         GLOBAL — escrito só pelo coletor,
+  └── indice/{categoria}                lido por qualquer usuário autenticado
+        quantidade, atualizadoEm,
+        itens: { sku: {n, u, p, t, d, img, vt} }   ← a categoria INTEIRA em 1 doc
+  └── itens/{sku}                       documento por item (detalhe)
 ```
+
+O índice do catálogo segue a mesma jogada do bucketing: **uma leitura serve a
+categoria inteira**. `p` é o preço de vitrine (tabela), `t` o "de" riscado
+quando a loja publica os dois, `vt` quando o item foi visto pela última vez. A
+vitrine é **acumulativa**: a renderização das listagens é instável (a mesma
+categoria já devolveu 47 itens numa requisição e 25 na seguinte), então um item
+só sai depois de sumir por 7 dias seguidos — o sinal de que foi descontinuado.
 
 > **Atenção aos dois campos homônimos.** `sistema/controle.ultimaColetaEm` é o
 > **portão**: decide se o ciclo coleta. `fontes/{id}.ultimaColetaEm` é apenas
@@ -196,13 +252,29 @@ média justificou o alerta seria falso, então nesse caso o título é
 
 ## O que o front faz
 
+O front publicado é o app Vue "Radar" ([frontend/](frontend/)), organizado em
+duas abas — **Monitoramento** e **Catálogo** — com o cadastro em modal:
+
 - **Login** com e-mail/senha e Google
-- **Cadastrar** produto com N pares loja/URL, loja vinda de dropdown verificado
-- **Editar** todo o formulário: nome, alvo, tolerância, e as lojas/URLs
+- **Monitoramento**: cartões com preço atual, **média de 30 dias** (a primeira
+  vez que o número que dispara o alerta "abaixo da média" aparece em tela),
+  menor preço do período e estado (`alerta de preço baixo` / `monitorando` /
+  `aguardando primeira coleta` / `pausado`)
+- **Análise detalhada** do produto selecionado: fontes com status e preço,
+  flutuação de 30 dias em barras + tabela equivalente (acessibilidade)
+- **Descoberta**: sugestões do catálogo ainda não acompanhadas
+- **Catálogo**: vitrine completa com filtro por categoria, busca, ordenação e
+  paginação; acompanhar um item pré-preenche o cadastro
+- **Cadastrar/editar** produto com N pares loja/URL em modal, com a recusa de
+  loja incompatível explicando o motivo verificado
 - **Pausar / retomar** coleta sem perder histórico
 - **Excluir** produto, com cascata manual (ver abaixo)
 - **Tentar de novo** numa fonte que falhou
-- **Gráfico** com 1d / 1s / 1m / 1a, mais tabela equivalente
+
+> **Diferença deliberada para o front antigo:** o gráfico de linhas com períodos
+> 1d/1s/1m/1a e escala R$/% foi substituído pela flutuação de 30 dias em barras,
+> seguindo o desenho "Radar". A lógica das séries longas continua em
+> `publico/app.js` se a paridade fizer falta — está listada em "O que falta".
 
 ### Cascata é manual, e tem que ser
 
@@ -316,9 +388,27 @@ teste vermelho** sem antes entender o que mudou.
 
 ### Front
 
+O front atual é o app Vue em [frontend/](frontend/) — visual "Radar", build com
+Vite. Ver [frontend/README.md](frontend/README.md) para decisões e estrutura.
+
 ```bash
-cd publico && python3 -m http.server 8080   # localhost já é domínio autorizado
+cd frontend && npm install && npm run dev   # http://localhost:5173
 ```
+
+O deploy continua `firebase deploy --only hosting`: o `predeploy` em
+`firebase.json` instala e builda sozinho.
+
+O front antigo (HTML + JS puro, sem build) segue intacto em `publico/` como
+referência e rota de retorno:
+
+```bash
+cd publico && python3 -m http.server 8090   # localhost já é domínio autorizado
+```
+
+> Evite a porta 8080 para servir o front: é a porta do emulador do Firestore, e
+> um servidor de arquivos parado ali já travou a suíte de testes uma vez (o
+> probe dos testes hoje distingue os dois, mas não há motivo para conviver com
+> a colisão).
 
 ---
 
@@ -425,13 +515,18 @@ execução. Ver o aviso na seção de lojas.
 
 ## O que falta
 
-- **Portão da Fase 5:** disparar o `workflow_dispatch` no GitHub e ver o ciclo
-  rodar contra o Firestore de produção. Exige o workflow na branch padrão e os
-  três secrets cadastrados.
-- Verificação visual do front em navegador (feita pelo usuário, não por mim).
-- Confirmar que o provedor Google de login está habilitado — a API pública não
-  permite sondar isso.
-- Conferir o consumo no console do Firebase após 48h de operação.
+- **Verificar o front Vue no navegador e fazer o primeiro deploy dele.** O build
+  compila e o preview serve, mas ninguém olhou as telas renderizadas com dados
+  reais. O deploy é `firebase deploy --only hosting` (o `predeploy` builda
+  sozinho); reverter é apontar `firebase.json` de volta para `publico`.
+- **Paridade do gráfico, se fizer falta no uso:** o front novo mostra só a
+  flutuação de 30 dias; os períodos 1d/1s/1a, a escala em variação % e a
+  comparação multi-produto do front antigo não foram portados.
+- Conferir o consumo no console do Firebase após 48h de operação — a raspagem
+  de 14 categorias escreve mais do que o desenho original previa.
 - Não existe `tests/test_main.py`: a lista de arquivos da §3 não prevê esse
   arquivo e o portão da fase é a execução real. `esta_na_hora` e o agrupamento
   por produto estão cobertos apenas pela verificação manual no emulador.
+- O front Vue não tem teste automatizado — a validação portada de
+  `publico/app.js` está coberta apenas pela leitura; um smoke com Vitest seria
+  o próximo investimento se o front continuar crescendo.

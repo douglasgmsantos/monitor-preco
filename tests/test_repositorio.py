@@ -28,11 +28,26 @@ from coletor.repositorio import (
 ENDERECO = os.environ.setdefault("FIRESTORE_EMULATOR_HOST", "127.0.0.1:8080")
 PROJETO = "demo-monitor"
 
+URL_DE_LIMPEZA = (
+    f"http://{ENDERECO}/emulator/v1/projects/{PROJETO}/databases/(default)/documents"
+)
+
 
 def _emulador_no_ar() -> bool:
+    """True só quando quem atende em ENDERECO é REALMENTE o emulador.
+
+    Antes esta função aceitava qualquer resposta em `GET /`, e isso custou uma
+    hora de depuração: um `python -m http.server 8080` (o comando documentado
+    para servir o front antigo!) fazia o probe passar, os testes deixavam de
+    ser pulados, e o cliente do Firestore ficava pendurado em gRPC contra um
+    servidor de arquivos — sem erro, sem timeout, sem pista.
+
+    O discriminador é o endpoint de limpeza, que só o emulador implementa: ele
+    responde 200, e um servidor HTTP comum responde 501 (verificado em
+    2026-08-12). É o mesmo endpoint que `limpar_emulador` usa.
+    """
     try:
-        httpx.get(f"http://{ENDERECO}/", timeout=2.0)
-        return True
+        return httpx.delete(URL_DE_LIMPEZA, timeout=2.0).status_code == 200
     except Exception:
         return False
 
@@ -63,10 +78,7 @@ def repositorio():
 
 @pytest.fixture(autouse=True)
 def limpar_emulador():
-    httpx.delete(
-        f"http://{ENDERECO}/emulator/v1/projects/{PROJETO}/databases/(default)/documents",
-        timeout=10.0,
-    )
+    httpx.delete(URL_DE_LIMPEZA, timeout=10.0)
     yield
 
 

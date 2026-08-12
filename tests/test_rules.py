@@ -39,10 +39,25 @@ RETENTATIVA = {
 }
 
 
+URL_DE_LIMPEZA = (
+    f"http://{ENDERECO}/emulator/v1/projects/{PROJETO}/databases/(default)/documents"
+)
+
+
 def _emulador_no_ar() -> bool:
+    """True só quando quem atende em ENDERECO é REALMENTE o emulador.
+
+    Aceitar qualquer resposta em `GET /` fazia um `python -m http.server 8080`
+    (o comando documentado para servir o front antigo!) passar pelo probe: os
+    testes deixavam de ser pulados e cada requisição esperava o timeout contra
+    um servidor de arquivos, travando a suíte por minutos sem dizer o motivo.
+
+    O discriminador é o endpoint de limpeza, que só o emulador implementa —
+    responde 200, contra 501 de um servidor HTTP comum (verificado em
+    2026-08-12). Mesmo endpoint que a fixture de limpeza usa.
+    """
     try:
-        httpx.get(f"http://{ENDERECO}/", timeout=2.0)
-        return True
+        return httpx.delete(URL_DE_LIMPEZA, timeout=2.0).status_code == 200
     except Exception:
         return False
 
@@ -113,10 +128,7 @@ def permitido(resposta: httpx.Response) -> bool:
 @pytest.fixture
 def cenario():
     """Semeia produto e fonte com o Admin SDK, que ignora as rules."""
-    httpx.delete(
-        f"http://{ENDERECO}/emulator/v1/projects/{PROJETO}/databases/(default)/documents",
-        timeout=10,
-    )
+    httpx.delete(URL_DE_LIMPEZA, timeout=10)
     os.environ["GCLOUD_PROJECT"] = PROJETO
     inicializar(project_id=PROJETO)
     repositorio = Repositorio()
