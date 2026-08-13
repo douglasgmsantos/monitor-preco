@@ -14,6 +14,9 @@ import { explicar } from "../composables/useProdutos.js";
 
 const props = defineProps({
   fonte: { type: Object, required: true },
+  // Marca a fonte mais barata ENTRE AS QUE VALEM. Quem decide é o pai, que é
+  // quem enxerga todas — a linha sozinha não tem como saber se é a menor.
+  maisBarata: { type: Boolean, default: false },
 });
 defineEmits(["retentar", "remover"]);
 
@@ -43,7 +46,8 @@ const quebrada = computed(() => props.fonte.comErro || props.fonte.status === "i
 </script>
 
 <template>
-  <div class="linha cartao" :class="situacao.classe">
+  <div class="linha cartao" :class="[situacao.classe, { 'mais-barata': maisBarata }]">
+    <span v-if="maisBarata" class="etiqueta">Melhor preço</span>
     <span class="sigla mono">{{ siglaDaLoja(fonte.loja) }}</span>
 
     <div class="identidade">
@@ -61,7 +65,7 @@ const quebrada = computed(() => props.fonte.comErro || props.fonte.status === "i
 
     <div class="coluna preco">
       <span class="rotulo">Preço</span>
-      <span class="mono valor">{{
+      <span class="mono valor" :class="{ destaque: maisBarata }">{{
         typeof fonte.ultimoPrecoCentavos === "number"
           ? formatarBRL(fonte.ultimoPrecoCentavos) : "———"
       }}</span>
@@ -77,6 +81,7 @@ const quebrada = computed(() => props.fonte.comErro || props.fonte.status === "i
 
 <style scoped>
 .linha {
+  position: relative;
   border-radius: 14px;
   padding: 14px 18px;
   display: flex; align-items: center; gap: 16px;
@@ -84,6 +89,24 @@ const quebrada = computed(() => props.fonte.comErro || props.fonte.status === "i
 }
 .linha.erro { border-color: var(--critico); }
 .linha.apagada { opacity: 0.6; }
+
+/* A mais barata: borda + etiqueta + preço em destaque.
+   Três sinais e não só a cor — a mesma regra dos selos de estado. Cor sozinha
+   some em captura de tela preto e branco e não existe para quem não distingue
+   verde de cinza. */
+.linha.mais-barata {
+  border-color: var(--bom);
+  box-shadow: 0 0 0 1px var(--bom);
+}
+.etiqueta {
+  position: absolute; top: -9px; left: 14px;
+  background: var(--bom); color: #fff;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 8px; border-radius: 999px;
+  line-height: 1.5;
+}
+.preco .valor.destaque { color: var(--bom); font-weight: 700; }
 
 .sigla {
   width: 44px; height: 44px; flex: none;

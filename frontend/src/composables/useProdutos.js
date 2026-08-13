@@ -209,6 +209,27 @@ export function menorPrecoAtual(produto) {
   return precos.length ? Math.min(...precos) : null;
 }
 
+/** Id da fonte que está com o menor preço, ou null.
+ *
+ *  MESMA regra de `menorPrecoAtual` — só fonte `ok`, sem erro e com preço
+ *  numérico. Precisa ser a mesma, senão a tela destacaria uma fonte e o alerta
+ *  usaria outra, e o usuário veria dois "menores preços" diferentes.
+ *
+ *  Empate resolve pela primeira: as fontes vêm ordenadas por id, então a
+ *  escolha é estável entre renders em vez de dançar a cada atualização.
+ */
+export function fonteMaisBarata(produto) {
+  let escolhida = null;
+  for (const f of produto.fontes) {
+    if (f.status !== "ok" || f.comErro) continue;
+    if (typeof f.ultimoPrecoCentavos !== "number") continue;
+    if (escolhida === null || f.ultimoPrecoCentavos < escolhida.ultimoPrecoCentavos) {
+      escolhida = f;
+    }
+  }
+  return escolhida ? escolhida.id : null;
+}
+
 export function ultimaVerificacao(produto) {
   const instantes = produto.fontes
     .map((f) => f.ultimaColetaEm)

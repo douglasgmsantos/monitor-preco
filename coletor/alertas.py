@@ -64,6 +64,10 @@ class Produto(Protocol):
 class Leitura(Protocol):
     """Uma leitura de uma fonte neste ciclo."""
 
+    # Imagem do produto na página, quando o parser conseguiu extrair. Faz o
+    # alerta sair como foto no Telegram em vez de texto com prévio de link.
+    imagem: str | None
+
     loja: str
     url: str
     preco_centavos: int | None
@@ -260,7 +264,7 @@ class RepositorioDeAlertas(Protocol):
 
 
 class Notificador(Protocol):
-    def enviar(self, mensagem: str) -> None: ...
+    def enviar(self, mensagem: str, imagem: str | None = None) -> None: ...
 
 
 def processar(
@@ -284,7 +288,10 @@ def processar(
         # A mensagem não mostra mais a média, então o `media_30_dias_centavos`
         # que rodava aqui sumiu junto — era uma varredura do rollup diário por
         # notificação enviada, para um número que ninguém lê.
-        notificador.enviar(montar_mensagem(produto, decisao.leitura))
+        notificador.enviar(
+            montar_mensagem(produto, decisao.leitura),
+            getattr(decisao.leitura, "imagem", None),
+        )
         repositorio.atualizar_estado_alerta(
             produto, decisao.novo_estado, decisao.preco_centavos, agora
         )

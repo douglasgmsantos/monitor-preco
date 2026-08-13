@@ -43,6 +43,7 @@ class LeituraFalsa:
     url: str = "https://loja-a.example/p/1"
     disponivel: bool = True
     suspeito: bool = False
+    imagem: str | None = None
 
 
 @dataclass
@@ -467,6 +468,36 @@ def test_mensagem_nao_muda_com_o_gatilho():
     leitura = LeituraFalsa(preco_centavos=105_000, loja="KaBuM",
                            url="https://www.kabum.com.br/p/1")
     assert montar_mensagem(produto, leitura) == montar_mensagem(produto, leitura)
+
+
+def test_alerta_com_imagem_vai_como_foto():
+    """A imagem chega ao notificador para o alerta sair como FOTO.
+
+    Sem isso o Telegram monta o prévio a partir das tags Open Graph da página —
+    site, título, descrição e imagem — e a API não deixa escolher quais campos
+    mostrar. Mandando a foto, o controle é nosso.
+    """
+    produto = ProdutoFalso()
+    repositorio = RepositorioFalso()
+    notificador = NotificadorMemoria()
+    leitura = LeituraFalsa(preco_centavos=105_000,
+                           imagem="https://loja.example/foto.jpg")
+
+    processar(produto, [leitura], AGORA, repositorio, notificador)
+
+    assert notificador.imagens == ["https://loja.example/foto.jpg"]
+
+
+def test_alerta_sem_imagem_ainda_notifica():
+    """Loja que não publica imagem não pode calar o alerta."""
+    produto = ProdutoFalso()
+    notificador = NotificadorMemoria()
+
+    processar(produto, [LeituraFalsa(preco_centavos=105_000)], AGORA,
+              RepositorioFalso(), notificador)
+
+    assert len(notificador.mensagens) == 1
+    assert notificador.imagens == [None]
 
 
 def test_notificador_memoria_nao_toca_a_rede():

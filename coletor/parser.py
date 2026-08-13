@@ -59,6 +59,38 @@ ERRO_SEM_OFERTA = "sem_oferta_ativa"
 
 SELETOR_JSONLD = 'script[type="application/ld+json"]'
 
+# Onde procurar a imagem do produto, em ordem. `og:image` primeiro porque é o
+# que a própria loja escolheu para representar a página em compartilhamento —
+# é exatamente o caso de uso aqui.
+SELETORES_DE_IMAGEM = (
+    ('meta[property="og:image"]', "content"),
+    ('meta[name="twitter:image"]', "content"),
+    ('link[rel="image_src"]', "href"),
+)
+
+
+def extrair_imagem(arvore: HTMLParser, produto: dict | None = None) -> str | None:
+    """URL da imagem do produto, ou None.
+
+    Tenta o JSON-LD primeiro quando ele existe (é o dado que a loja declara
+    como do PRODUTO), e cai para as metatags sociais. Só aceita URL absoluta:
+    caminho relativo não serve para o Telegram baixar.
+    """
+    if produto:
+        bruto = produto.get("image")
+        achada = _primeira_imagem(bruto)
+        if achada and achada.startswith("http"):
+            return achada
+
+    for seletor, atributo in SELETORES_DE_IMAGEM:
+        no = arvore.css_first(seletor)
+        if no is None:
+            continue
+        valor = (no.attributes.get(atributo) or "").strip()
+        if valor.startswith("http"):
+            return valor
+    return None
+
 # Assinaturas de página de desafio anti-bot. Medidas em 2026-08-12 buscando as
 # três lojas de fixture a partir desta máquina:
 #
@@ -105,6 +137,9 @@ class ResultadoExtracao:
     # e estado JSON embutido na página
     origem: Literal["j", "g", "m", "d", "e"] | None
     erro: str | None  # preenchido apenas quando preco_centavos is None
+    # Imagem do produto, para o alerta sair como FOTO no Telegram em vez de
+    # texto com prévio de link. Opcional: sem ela o alerta cai para texto.
+    imagem: str | None = None
 
 
 @dataclass(frozen=True)
@@ -152,6 +187,10 @@ class SeletoresDeProduto:
     # não há preço, o resultado é ERRO_SEM_OFERTA em vez de erro de parse — a
     # diferença entre "a página mudou" e "o produto está sem vendedor".
     marcador_sem_oferta: str | None = None
+    # Onde está a imagem, quando a loja não publica og:image. A Amazon é o caso:
+    # nenhuma metatag social na página de produto, só o <img> principal.
+    imagem: str | None = None
+    imagem_atributo: str = "src"
     preco_tabela: str | None = None
     disponibilidade: str | None = None
     # Presença do botão de compra é sinal POSITIVO de estoque. Vale mais que o
@@ -341,6 +380,7 @@ def extrair_preco(
         disponivel=_disponibilidade(oferta_escolhida, produto),
         origem="j",
         erro=None,
+        imagem=extrair_imagem(arvore, produto),
     )
 
 
@@ -401,6 +441,7 @@ def extrair_preco_dom(
         disponivel=_disponibilidade_dom(arvore, seletores),
         origem="d",
         erro=None,
+        imagem=_imagem_por_seletor(arvore, seletores) or extrair_imagem(arvore),
     )
 
 
@@ -426,6 +467,24 @@ def extrair_preco_do_estado(
     if achado is None:
         return None
     return normalizar_para_centavos(achado.group(1), teto_centavos=teto_centavos)
+
+
+def _imagem_por_seletor(
+    arvore: HTMLParser, seletores: SeletoresDeProduto
+) -> str | None:
+    """Imagem pelo seletor da loja, quando ela declara um."""
+    if not seletores.imagem:
+        return None
+    no = arvore.css_first(seletores.imagem)
+    if no is None:
+        return None
+    # O atributo preferido primeiro (na Amazon é `data-old-hires`, a versão em
+    # alta), com `src` de reserva.
+    for atributo in (seletores.imagem_atributo, "src"):
+        valor = (no.attributes.get(atributo) or "").strip()
+        if valor.startswith("http"):
+            return valor
+    return None
 
 
 def _confere_moeda(texto: str, marcadores: tuple[str, ...]) -> bool:
@@ -956,7 +1015,9 @@ def _fallback(
         if moeda is not None and moeda.strip().upper() != MOEDA_ACEITA:
             return ResultadoExtracao(None, moeda, False, None, "moeda_nao_suportada")
 
-        return ResultadoExtracao(centavos, MOEDA_ACEITA, True, origem, None)
+        return ResultadoExtracao(
+            centavos, MOEDA_ACEITA, True, origem, None, extrair_imagem(arvore)
+        )
 
     return ResultadoExtracao(None, None, False, None, erro)
 

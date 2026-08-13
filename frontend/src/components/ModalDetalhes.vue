@@ -11,7 +11,7 @@ import { formatarBRL, variacaoPct } from "../dinheiro.js";
 import { haQuantoTempo } from "../tempo.js";
 import { useAuth } from "../composables/useAuth.js";
 import {
-  menorPrecoAtual, ultimaVerificacao, useProdutos,
+  fonteMaisBarata, menorPrecoAtual, ultimaVerificacao, useProdutos,
 } from "../composables/useProdutos.js";
 import {
   PERIODOS, PERIODO_PADRAO, resumo30d, serieDoPeriodo,
@@ -37,6 +37,22 @@ const comoTabela = ref(false);
 const atual = computed(() => menorPrecoAtual(props.produto));
 const verificado = computed(() => haQuantoTempo(ultimaVerificacao(props.produto)));
 const variacao = computed(() => variacaoPct(atual.value, media30d.value));
+const idMaisBarata = computed(() => fonteMaisBarata(props.produto));
+
+/** Fontes com a mais barata no topo. Ela é a resposta que o usuário veio
+ *  buscar; deixá-la no meio da lista obriga a comparar preço a preço. */
+const fontesOrdenadas = computed(() => {
+  const vale = (f) =>
+    f.status === "ok" && !f.comErro && typeof f.ultimoPrecoCentavos === "number";
+  return [...props.produto.fontes].sort((a, b) => {
+    if (vale(a) && vale(b)) return a.ultimoPrecoCentavos - b.ultimoPrecoCentavos;
+    // Sem preço vai para o fim: ordená-la junto exigiria inventar um valor.
+    if (vale(a)) return -1;
+    if (vale(b)) return 1;
+    return 0;
+  });
+});
+
 const tituloDoPeriodo = computed(() =>
   (PERIODOS.find((p) => p.id === periodo.value) || {}).titulo || "Flutuação");
 
@@ -129,9 +145,10 @@ onUnmounted(() => document.removeEventListener("keydown", aoTeclar));
         <p class="olho">Fontes</p>
         <div class="fontes">
           <LinhaFonte
-            v-for="fonte in produto.fontes"
+            v-for="fonte in fontesOrdenadas"
             :key="fonte.id"
             :fonte="fonte"
+            :mais-barata="produto.fontes.length > 1 && fonte.id === idMaisBarata"
             @retentar="retentarFonte(produto.id, fonte.id)"
             @remover="apagarFonteComHistorico(produto.id, fonte.id)"
           />

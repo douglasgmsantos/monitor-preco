@@ -111,6 +111,10 @@ SELETORES_AMAZON = SeletoresDeProduto(
     # Sem ele, esse estado virava `sem_preco_no_dom` — erro de parse — e a fonte
     # era condenada como se a URL estivesse errada.
     marcador_sem_oferta="#unqualifiedBuyBox",
+    # A Amazon não publica og:image nem twitter:image na página de produto —
+    # verificado no template. `data-old-hires` é a versão em alta resolução.
+    imagem="#landingImage",
+    imagem_atributo="data-old-hires",
     preco_tabela=".basisPrice .a-offscreen",
     disponibilidade="#availability",
     botao_de_compra="#add-to-cart-button",
@@ -361,6 +365,10 @@ def _com_preco_avista(
         disponivel=resultado.disponivel,
         origem="e",
         erro=None,
+        # A imagem também: só o PREÇO vem do estado, o resto do resultado
+        # original continua valendo. Reconstruir o dataclass sem repassá-la
+        # descartava a imagem em silêncio.
+        imagem=resultado.imagem,
     )
 
 

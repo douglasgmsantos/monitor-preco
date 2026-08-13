@@ -38,6 +38,7 @@ class LeituraDoCiclo:
     preco_centavos: int | None
     disponivel: bool
     suspeito: bool
+    imagem: str | None = None
 
 
 async def processar_pendentes(
@@ -109,6 +110,7 @@ def avaliar_alertas(
                     preco_centavos=item.resultado.preco_centavos,
                     disponivel=item.resultado.disponivel,
                     suspeito=item.suspeito,
+                    imagem=item.resultado.imagem,
                 )
                 for item in itens
             ]
