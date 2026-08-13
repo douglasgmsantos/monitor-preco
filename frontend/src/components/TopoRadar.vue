@@ -4,8 +4,12 @@ import { useAuth } from "../composables/useAuth.js";
 defineProps({
   aba: { type: String, required: true },
   email: { type: String, default: "" },
+  // Sem bot configurado o sistema coleta mas não avisa ninguém. O aviso fica no
+  // botão do Telegram porque é lá que se resolve — um banner separado seria
+  // mais um lugar para o usuário fechar sem ler.
+  telegramPendente: { type: Boolean, default: false },
 });
-defineEmits(["trocar-aba", "novo-produto"]);
+defineEmits(["trocar-aba", "novo-produto", "abrir-telegram"]);
 
 const { sair } = useAuth();
 
@@ -33,11 +37,23 @@ function alternarTema() {
           :class="{ ativa: aba === 'catalogo' }"
           @click="$emit('trocar-aba', 'catalogo')"
         >Catálogo</button>
+        <button
+          :class="{ ativa: aba === 'historico' }"
+          @click="$emit('trocar-aba', 'historico')"
+        >Histórico</button>
       </nav>
 
       <div class="espaco"></div>
 
       <span class="quem dica" :title="email">{{ email }}</span>
+      <button
+        class="botao-discreto telegram"
+        :class="{ pendente: telegramPendente }"
+        :title="telegramPendente
+          ? 'Nenhum bot configurado — você não receberá alertas'
+          : 'Configurar o Telegram'"
+        @click="$emit('abrir-telegram')"
+      >✈<span v-if="telegramPendente" class="alerta" aria-hidden="true"></span></button>
       <button class="botao-discreto" title="Alternar tema" @click="alternarTema">◐</button>
       <button class="botao-discreto" @click="sair">Sair</button>
       <button class="botao-primario" @click="$emit('novo-produto')">+ Novo produto</button>
@@ -70,6 +86,13 @@ function alternarTema() {
   background: var(--primario); color: var(--primario-texto);
 }
 .espaco { flex: 1; }
+.telegram { position: relative; font-size: 15px; }
+.telegram.pendente { color: var(--atencao); }
+.alerta {
+  position: absolute; top: 4px; right: 4px;
+  width: 7px; height: 7px; border-radius: 999px;
+  background: var(--atencao);
+}
 .quem { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 700px) {
   .interno { padding: 10px 16px; gap: 10px; }

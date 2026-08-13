@@ -51,12 +51,16 @@ class RepositorioFalso:
     media: int | None = None
     media_hist: int | None = None
     estados: list = field(default_factory=list)
+    notificacoes: list = field(default_factory=list)
 
     def atualizar_estado_alerta(self, produto, estado, preco_centavos, alertado_em):
         self.estados.append((produto.id, estado, preco_centavos, alertado_em))
 
     def media_historica_centavos(self, produto):
         return self.media_hist
+
+    def registrar_notificacao(self, produto, dados):
+        self.notificacoes.append(dados)
 
 
 # --- O gatilho é o valor máximo ----------------------------------------------
@@ -498,6 +502,42 @@ def test_alerta_sem_imagem_ainda_notifica():
 
     assert len(notificador.mensagens) == 1
     assert notificador.imagens == [None]
+
+
+def test_notificacao_enviada_vira_registro_no_diario():
+    """O que foi enviado precisa sobreviver ao próximo alerta.
+
+    `ultimoAlertaEm` no produto guarda só o mais recente; a tela de histórico
+    precisa de todos. E guarda a MENSAGEM como saiu — o formato já mudou uma
+    vez, e remontá-la com o código de hoje mostraria algo que nunca foi enviado.
+    """
+    produto = ProdutoFalso()
+    repositorio = RepositorioFalso()
+    leitura = LeituraFalsa(preco_centavos=105_000, loja="KaBuM",
+                           url="https://www.kabum.com.br/p/1",
+                           imagem="https://loja.example/f.jpg")
+
+    processar(produto, [leitura], AGORA, repositorio, NotificadorMemoria())
+
+    (registro,) = repositorio.notificacoes
+    assert registro["precoCentavos"] == 105_000
+    assert registro["loja"] == "KaBuM"
+    assert registro["imagem"] == "https://loja.example/f.jpg"
+    assert registro["enviadaEm"] == AGORA
+    assert registro["mensagem"].startswith("🔥🙏🏻")
+
+
+def test_alerta_calado_por_cooldown_nao_entra_no_diario():
+    """O diário é do que FOI ENVIADO. Registrar o que o cooldown engoliu faria
+    a tela mostrar mensagem que ninguém recebeu."""
+    produto = ProdutoFalso(estado=ESTADO_ACIMA,
+                           ultimo_alerta_em=AGORA - timedelta(hours=1))
+    repositorio = RepositorioFalso()
+
+    processar(produto, [LeituraFalsa(preco_centavos=105_000)], AGORA,
+              repositorio, NotificadorMemoria())
+
+    assert repositorio.notificacoes == []
 
 
 def test_notificador_memoria_nao_toca_a_rede():

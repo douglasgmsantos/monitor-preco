@@ -26,6 +26,15 @@ COLECAO_USUARIOS = "usuarios"
 COLECAO_PRODUTOS = "produtos"
 COLECAO_FONTES = "fontes"
 COLECAO_HISTORICO = "historico"
+# Diário do que foi NOTIFICADO. Separado do histórico de preço porque responde
+# outra pergunta: o histórico diz "quanto custava", este diz "o que te avisamos".
+# Sem ele, a única memória de um alerta é `ultimoAlertaEm` no produto — que
+# guarda só o mais recente e some no alerta seguinte.
+COLECAO_NOTIFICACOES = "notificacoes"
+# Preferências do usuário que o CLIENTE escreve (hoje: o bot do Telegram dele).
+# Não confundir com a subcoleção `sistema`, que é só de leitura para o cliente.
+COLECAO_CONFIG = "config"
+DOC_TELEGRAM = "telegram"
 COLECAO_DIARIO = "diario"
 # Decisão A: o controle de cadência é GLOBAL, em coleção raiz. O intervalo de
 # coleta pertence ao coletor, não a cada usuário.
@@ -127,6 +136,16 @@ def chave_dia(instante: datetime) -> str:
     a chave nunca comece com dígito.
     """
     return "d" + instante.strftime("%Y%m%d")
+
+
+def uid_do_produto(produto_ref) -> str | None:
+    """`usuarios/{uid}/produtos/{id}` -> uid.
+
+    O caminho é a única fonte do dono: o documento do produto não guarda o uid,
+    e duplicá-lo lá seria mais um campo para divergir.
+    """
+    partes = (produto_ref.path or "").split("/")
+    return partes[1] if len(partes) >= 2 and partes[0] == COLECAO_USUARIOS else None
 
 
 def id_bucket_historico(fonte_id: str, instante: datetime) -> str:
@@ -606,6 +625,42 @@ class Repositorio:
         self._db.collection(COLECAO_SISTEMA).document(DOC_CONTROLE).set(
             {"ultimaColetaEm": agora}, merge=True
         )
+
+    # --- Telegram por usuário -----------------------------------------------
+
+    def ler_config_telegram(self, uid: str) -> dict | None:
+        """Bot e chat do usuário, ou None se ele não configurou o próprio.
+
+        Sem configuração, quem notifica é o bot global do `.env` — é o que
+        mantém funcionando quem já usava o sistema antes deste campo existir.
+        """
+        snapshot = (
+            self._db.collection(COLECAO_USUARIOS).document(uid)
+            .collection(COLECAO_CONFIG).document(DOC_TELEGRAM).get()
+        )
+        if not snapshot.exists:
+            return None
+        dados = snapshot.to_dict() or {}
+        if not dados.get("botToken") or not dados.get("chatId"):
+            return None
+        return dados
+
+    # --- diário de notificações ---------------------------------------------
+
+    def registrar_notificacao(self, produto: Produto, dados: dict) -> None:
+        """Grava o que foi enviado, para a tela de histórico.
+
+        Guarda a MENSAGEM inteira, não só os campos: o formato muda com o tempo
+        (já mudou uma vez), e um histórico que remonta a mensagem com o código
+        de hoje mostraria algo que nunca foi enviado.
+        """
+        uid = uid_do_produto(produto.ref)
+        if not uid:
+            logger.warning("produto sem uid no caminho: %s", produto.ref.path)
+            return
+        self._db.collection(COLECAO_USUARIOS).document(uid).collection(
+            COLECAO_NOTIFICACOES
+        ).add(dados)
 
     # --- páginas capturadas por fora (n8n) ----------------------------------
 

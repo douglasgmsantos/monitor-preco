@@ -262,6 +262,8 @@ class RepositorioDeAlertas(Protocol):
 
     def media_historica_centavos(self, produto: Produto) -> int | None: ...
 
+    def registrar_notificacao(self, produto: Produto, dados: dict) -> None: ...
+
 
 class Notificador(Protocol):
     def enviar(self, mensagem: str, imagem: str | None = None) -> None: ...
@@ -288,13 +290,24 @@ def processar(
         # A mensagem não mostra mais a média, então o `media_30_dias_centavos`
         # que rodava aqui sumiu junto — era uma varredura do rollup diário por
         # notificação enviada, para um número que ninguém lê.
-        notificador.enviar(
-            montar_mensagem(produto, decisao.leitura),
-            getattr(decisao.leitura, "imagem", None),
-        )
+        mensagem = montar_mensagem(produto, decisao.leitura)
+        imagem = getattr(decisao.leitura, "imagem", None)
+        notificador.enviar(mensagem, imagem)
         repositorio.atualizar_estado_alerta(
             produto, decisao.novo_estado, decisao.preco_centavos, agora
         )
+        # O diário guarda a MENSAGEM como saiu. Ver `registrar_notificacao`.
+        repositorio.registrar_notificacao(produto, {
+            "produtoId": produto.id,
+            "nome": produto.nome,
+            "precoCentavos": decisao.preco_centavos,
+            "loja": decisao.leitura.loja,
+            "url": decisao.leitura.url,
+            "imagem": imagem,
+            "mensagem": mensagem,
+            "motivo": decisao.motivo,
+            "enviadaEm": agora,
+        })
     elif decisao.novo_estado != produto.estado:
         # Transição silenciosa (rearme ou cooldown): não mexe em
         # ultimo_alerta_em nem em ultimo_preco_alertado.

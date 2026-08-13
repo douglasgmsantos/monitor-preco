@@ -22,9 +22,9 @@ from google.api_core.exceptions import FailedPrecondition, PermissionDenied
 
 from coletor import alertas, config
 from coletor.coleta import LimitadorPorHost, coletar_fontes, validar_fonte_pendente
-from coletor.notificador import NotificadorTelegram
+from coletor.notificador import NotificadorTelegram, notificador_do_usuario
 from coletor.raspagem import Categoria, raspar
-from coletor.repositorio import Repositorio, inicializar
+from coletor.repositorio import Repositorio, inicializar, uid_do_produto
 
 logger = logging.getLogger("coletor")
 
@@ -91,6 +91,20 @@ def avaliar_alertas(
             por_produto[coleta.fonte.produto_ref.path].append(coleta)
 
     notificados = 0
+    # Um notificador por USUÁRIO, resolvido uma vez e reaproveitado: sem o
+    # cache, cada produto do mesmo dono custaria uma leitura da config.
+    notificadores: dict[str, object] = {}
+
+    def notificador_para(produto_ref):
+        uid = uid_do_produto(produto_ref)
+        if uid is None:
+            return notificador
+        if uid not in notificadores:
+            notificadores[uid] = notificador_do_usuario(
+                repositorio.ler_config_telegram(uid), notificador
+            )
+        return notificadores[uid]
+
     for itens in por_produto.values():
         produto_ref = itens[0].fonte.produto_ref
         try:
@@ -115,7 +129,8 @@ def avaliar_alertas(
                 for item in itens
             ]
             decisao = alertas.processar(
-                produto, leituras, agora, repositorio, notificador,
+                produto, leituras, agora, repositorio,
+                notificador_para(produto_ref),
                 margem_media_pct=margem_media_pct,
             )
             logger.info(

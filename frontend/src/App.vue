@@ -7,28 +7,46 @@ import TelaLogin from "./components/TelaLogin.vue";
 import TopoRadar from "./components/TopoRadar.vue";
 import VisaoMonitoramento from "./components/VisaoMonitoramento.vue";
 import VisaoCatalogo from "./components/VisaoCatalogo.vue";
+import VisaoHistorico from "./components/VisaoHistorico.vue";
 import ModalProduto from "./components/ModalProduto.vue";
 import ModalDetalhes from "./components/ModalDetalhes.vue";
+import ModalTelegram from "./components/ModalTelegram.vue";
+import { useNotificacoes } from "./composables/useNotificacoes.js";
+import { useConfigTelegram } from "./composables/useConfigTelegram.js";
 
 const { usuario, carregouAuth } = useAuth();
 const { produtos, observar, parar } = useProdutos();
 const { carregarCatalogo } = useCatalogo();
+const { limparNotificacoes } = useNotificacoes();
+const {
+  config: configTelegram, carregado: telegramCarregado,
+  carregarConfigTelegram, limparConfigTelegram,
+} = useConfigTelegram();
 
-const aba = ref("monitoramento");        // "monitoramento" | "catalogo"
+const aba = ref("monitoramento");   // "monitoramento" | "catalogo" | "historico"
 const selecionadoId = ref(null);
 const modal = ref({ aberto: false, produtoId: null, prefill: null });
 const detalhesId = ref(null);
+const telegram = ref({ aberto: false, primeiraVez: false });
 
-watch(usuario, (quem) => {
+watch(usuario, async (quem) => {
   if (quem) {
     observar(quem.uid);
     carregarCatalogo();
+    await carregarConfigTelegram(quem.uid);
+    // Só depois de LER é que dá para saber se falta configurar. Abrir o modal
+    // antes da leitura o mostraria a quem já configurou, a cada login.
+    if (!configTelegram.value) telegram.value = { aberto: true, primeiraVez: true };
   } else {
     parar();
+    limparNotificacoes();
+    limparConfigTelegram();
     selecionadoId.value = null;
     aba.value = "monitoramento";
   }
 }, { immediate: true });
+
+const telegramPendente = computed(() => telegramCarregado.value && !configTelegram.value);
 
 // Sem seleção (ou seleção apagada), o primeiro produto assume — igual ao
 // front antigo, para a análise detalhada nunca apontar para o vazio.
@@ -88,8 +106,10 @@ function editarDoDetalhe(produtoId) {
     <TopoRadar
       :aba="aba"
       :email="usuario.email || usuario.displayName || ''"
+      :telegram-pendente="telegramPendente"
       @trocar-aba="aba = $event"
       @novo-produto="abrirCriacao()"
+      @abrir-telegram="telegram = { aberto: true, primeiraVez: false }"
     />
 
     <main class="envelope">
@@ -103,7 +123,8 @@ function editarDoDetalhe(produtoId) {
         @novo-produto="abrirCriacao()"
         @ir-catalogo="aba = 'catalogo'"
       />
-      <VisaoCatalogo v-else @acompanhar="acompanhar" />
+      <VisaoCatalogo v-else-if="aba === 'catalogo'" @acompanhar="acompanhar" />
+      <VisaoHistorico v-else />
     </main>
 
     <ModalDetalhes
@@ -119,6 +140,12 @@ function editarDoDetalhe(produtoId) {
       :prefill="modal.prefill"
       @fechar="fecharModal"
       @salvo="aoSalvar"
+    />
+
+    <ModalTelegram
+      v-if="telegram.aberto"
+      :primeira-vez="telegram.primeiraVez"
+      @fechar="telegram = { aberto: false, primeiraVez: false }"
     />
   </template>
 </template>

@@ -78,6 +78,22 @@ class NotificadorTelegram:
             return False
 
 
+def notificador_do_usuario(
+    config_do_usuario: dict | None, padrao: Notificador
+) -> Notificador:
+    """O bot do usuário quando ele configurou um; o global quando não.
+
+    A queda para o padrão é o que mantém funcionando quem usava o sistema antes
+    de o campo existir — e quem configurou errado e apagou os dados.
+    """
+    if not config_do_usuario:
+        return padrao
+    return NotificadorTelegram(
+        config_do_usuario.get("botToken", ""),
+        str(config_do_usuario.get("chatId", "")),
+    )
+
+
 class NotificadorMemoria:
     """Acumula mensagens numa lista. Usado nos testes, sem rede."""
 

@@ -94,6 +94,34 @@ service cloud.firestore {
       }
 
       match /sistema/{docId} { allow read: if ehDono(uid); allow write: if false; }
+
+      // Preferências que o PRÓPRIO usuário escreve. Hoje só o bot do Telegram.
+      //
+      // O botToken é segredo — do usuário, não do sistema. Só o dono lê e
+      // escreve, e o catch-all no fim garante que ninguém mais chega aqui.
+      // O coletor lê pelo Admin SDK, que ignora rules.
+      //
+      // Validar o formato aqui evita o modo de falha mais chato: config
+      // pela metade faz o coletor cair no bot global sem dizer nada, e o
+      // usuário fica esperando mensagem que vai para outro lugar.
+      match /config/telegram {
+        allow read, delete: if ehDono(uid);
+        allow write: if ehDono(uid)
+                     && request.resource.data.botToken is string
+                     && request.resource.data.botToken.matches('[0-9]+:.+')
+                     && request.resource.data.chatId is string
+                     && request.resource.data.chatId.size() > 0
+                     && request.resource.data.keys().hasOnly(
+                          ['botToken', 'chatId', 'nomeDoBot', 'atualizadoEm']);
+      }
+
+      // Diário de notificações: o coletor escreve, o dono lê e pode apagar.
+      // Poder apagar o próprio histórico não é poder forjá-lo — criar e alterar
+      // seguem bloqueados, que é o que protege a integridade do que foi enviado.
+      match /notificacoes/{docId} {
+        allow read, delete: if ehDono(uid);
+        allow create, update: if false;
+      }
     }
 
     // Catálogo: global e compartilhado. Qualquer usuário autenticado lê para
