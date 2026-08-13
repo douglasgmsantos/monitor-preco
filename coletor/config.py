@@ -9,7 +9,10 @@ from dataclasses import dataclass
 
 # Valores padrão em um lugar só, para que testes e produção não divirjam.
 TETO_CENTAVOS_PADRAO = 100_000_000
-INTERVALO_COLETA_HORAS_PADRAO = 1
+# Em MINUTOS, não horas: a coleta passou a rodar de 30 em 30 min e um campo em
+# horas não expressa isso. A raspagem de catálogo continua em horas — ela mede
+# composição de vitrine, que muda em dias.
+INTERVALO_COLETA_MINUTOS_PADRAO = 30
 LIMIAR_SANIDADE_PADRAO = "0.70"
 USER_AGENT_PADRAO = "MonitorPrecos/1.0 (uso pessoal)"
 MARGEM_MEDIA_PCT_PADRAO = 10
@@ -23,7 +26,7 @@ class Config:
     firebase_sa_base64: str
     telegram_bot_token: str
     telegram_chat_id: str
-    intervalo_coleta_horas: int
+    intervalo_coleta_minutos: int
     limiar_sanidade: str
     teto_centavos: int
     user_agent: str
@@ -38,8 +41,8 @@ def carregar() -> Config:
         firebase_sa_base64=os.environ.get("FIREBASE_SA_BASE64", ""),
         telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN", ""),
         telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID", ""),
-        intervalo_coleta_horas=int(
-            os.environ.get("INTERVALO_COLETA_HORAS", INTERVALO_COLETA_HORAS_PADRAO)
+        intervalo_coleta_minutos=int(
+            os.environ.get("INTERVALO_COLETA_MINUTOS", INTERVALO_COLETA_MINUTOS_PADRAO)
         ),
         # mantido como string: quem usa converte para Decimal, nunca para float
         limiar_sanidade=os.environ.get("LIMIAR_SANIDADE", LIMIAR_SANIDADE_PADRAO),

@@ -5,11 +5,12 @@
 // produto — medido em 2026-08-10). Ele nunca dispara alerta; serve para achar
 // o produto. O aviso sob o título existe para o usuário não comparar dois
 // números que não são comparáveis.
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { formatarBRL } from "../dinheiro.js";
 import { nomeDaLojaPorHost, hostDaUrl } from "../lojas.js";
 import { useCatalogo } from "../composables/useCatalogo.js";
 import { useProdutos } from "../composables/useProdutos.js";
+import FiltrosProdutos from "./FiltrosProdutos.vue";
 
 const emit = defineEmits(["acompanhar"]);
 
@@ -17,10 +18,29 @@ const { catalogo, categorias, carregado } = useCatalogo();
 const { produtos } = useProdutos();
 
 const POR_PAGINA = 12;
-const categoria = ref("");
 const busca = ref("");
-const ordem = ref("preco");
 const pagina = ref(1);
+
+// Mesmo componente e mesmo formato de estado do radar. Duas telas com listas
+// parecidas precisam filtrar do mesmo jeito — inventar um segundo padrão aqui
+// só criaria diferença sem motivo.
+const filtros = ref({
+  ordem: "", precoMin: null, precoMax: null, desde: "", ate: "",
+  loja: "", categoria: "",
+});
+watch(filtros, () => { pagina.value = 1; }, { deep: true });
+
+const lojasPresentes = computed(() => {
+  const nomes = new Set();
+  for (const item of catalogo.value) if (item.loja) nomes.add(item.loja);
+  return [...nomes].sort((a, b) => a.localeCompare(b, "pt-BR"));
+});
+
+const categoriasParaFiltro = computed(() =>
+  categorias.value.map((c) => ({
+    valor: c.categoria,
+    rotulo: `${c.categoria} (${c.quantidade})`,
+  })));
 
 const urlsAcompanhadas = computed(() => {
   const urls = new Set();
@@ -31,16 +51,32 @@ const urlsAcompanhadas = computed(() => {
 });
 
 const filtrados = computed(() => {
+  const f = filtros.value;
   let itens = catalogo.value.filter((i) => i.preco !== null || i.disponivel === false);
-  if (categoria.value) itens = itens.filter((i) => i.categoria === categoria.value);
+
   const texto = busca.value.trim().toLowerCase();
   if (texto) itens = itens.filter((i) => i.nome.toLowerCase().includes(texto));
+
+  if (f.categoria) itens = itens.filter((i) => i.categoria === f.categoria);
+  if (f.loja) itens = itens.filter((i) => i.loja === f.loja);
+
+  if (f.precoMin !== null || f.precoMax !== null) {
+    itens = itens.filter((i) => {
+      if (i.preco === null) return false;   // esgotado não cabe em faixa nenhuma
+      if (f.precoMin !== null && i.preco < f.precoMin) return false;
+      if (f.precoMax !== null && i.preco > f.precoMax) return false;
+      return true;
+    });
+  }
+
   return [...itens].sort((a, b) => {
-    if (ordem.value === "nome") return a.nome.localeCompare(b.nome, "pt-BR");
-    // esgotados vão para o fim, não para o topo com preço nulo
+    if (f.ordem === "nome") return a.nome.localeCompare(b.nome, "pt-BR");
+    // Esgotado (preço nulo) vai para o fim em qualquer ordenação: no topo de
+    // "maior valor" ele seria uma linha vazia liderando a lista.
     if (a.preco === null) return 1;
     if (b.preco === null) return -1;
-    return a.preco - b.preco;
+    if (f.ordem === "maior") return b.preco - a.preco;
+    return a.preco - b.preco;   // padrão: menor preço primeiro
   });
 });
 
@@ -77,19 +113,15 @@ function acompanhar(item) {
     </p>
 
     <div class="filtros">
-      <select v-model="categoria" @change="aoFiltrar">
-        <option value="">todas as categorias</option>
-        <option v-for="c in categorias" :key="`${c.loja}/${c.categoria}`" :value="c.categoria">
-          {{ c.categoria }} ({{ c.quantidade }})
-        </option>
-      </select>
       <input v-model="busca" class="busca" placeholder="filtrar por nome…" @input="aoFiltrar">
-      <select v-model="ordem" @change="aoFiltrar">
-        <option value="preco">menor preço primeiro</option>
-        <option value="nome">nome (A–Z)</option>
-      </select>
       <span class="dica">{{ filtrados.length }} item(ns)</span>
     </div>
+    <FiltrosProdutos
+      v-model="filtros"
+      :lojas="lojasPresentes"
+      :categorias="categoriasParaFiltro"
+      :com-data="false"
+    />
 
     <div v-if="visiveis.length" class="grade">
       <article

@@ -104,13 +104,19 @@ onUnmounted(() => document.removeEventListener("keydown", aoTeclar));
           </span>
         </div>
         <div class="estat">
-          <span class="rotulo">Faixa aceita</span>
+          <span class="rotulo">{{ produto.dados.valorMinCentavos ? "Faixa aceita" : "Alerta em" }}</span>
           <span class="valor mono faixa">
-            {{ formatarBRL(produto.dados.valorMinCentavos) }}
-            <span class="ate">até</span>
+            <template v-if="produto.dados.valorMinCentavos">
+              {{ formatarBRL(produto.dados.valorMinCentavos) }}
+              <span class="ate">até</span>
+            </template>
             {{ formatarBRL(produto.dados.valorMaxCentavos) }}
           </span>
-          <span class="sub">o máximo é o que dispara o alerta</span>
+          <span class="sub">
+            {{ produto.dados.valorMinCentavos
+              ? "o máximo é o que dispara o alerta"
+              : "avisa em até este valor" }}
+          </span>
         </div>
         <div class="estat">
           <span class="rotulo">Média 30 dias</span>

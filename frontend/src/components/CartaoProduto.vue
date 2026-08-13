@@ -148,7 +148,7 @@ async function excluir() {
     <div class="divisor"></div>
 
     <div class="estatisticas">
-      <div class="estat">
+      <div class="estat destaque-atual">
         <span class="rotulo">Atual</span>
         <span class="valor mono" :class="{ destaque: variacao !== null && variacao < 0 }">
           {{ formatarBRL(atual) }}
@@ -182,8 +182,8 @@ async function excluir() {
 
 <style scoped>
 .produto {
-  padding: 22px;
-  display: flex; flex-direction: column; gap: 18px;
+  padding: 16px;
+  display: flex; flex-direction: column; gap: 14px;
   cursor: pointer;
   min-width: 0;
 }
@@ -225,7 +225,7 @@ async function excluir() {
 .thumb img { width: 100%; height: 100%; object-fit: contain; }
 .cabeca-texto { min-width: 0; display: grid; gap: 6px; justify-items: start; }
 .nome {
-  margin: 0; font-size: 19px; font-weight: 650; line-height: 1.25;
+  margin: 0; font-size: 15px; font-weight: 650; line-height: 1.3;
   letter-spacing: -0.01em;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden;   /* 2 linhas: cortar o nome no meio esconde o modelo */
@@ -234,37 +234,49 @@ async function excluir() {
 
 .divisor { border-top: 1px solid var(--borda); }
 
+/* "Atual" ocupa a linha inteira e as outras duas dividem a de baixo.
+   Três colunas num cartão de ~250px dariam 80px cada, e "R$ 4.899,99" não cabe
+   — o número quebraria no meio. Nenhuma informação some: só muda o arranjo. */
 .estatisticas {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px;
 }
-.estat { display: grid; gap: 3px; align-content: start; }
+.estat { display: grid; gap: 2px; align-content: start; min-width: 0; }
+.estat.destaque-atual { grid-column: 1 / -1; }
 .rotulo {
-  font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.06em;
   text-transform: uppercase; color: var(--tinta-fraca);
 }
-.valor { font-size: 21px; font-weight: 600; letter-spacing: -0.01em; }
+.valor {
+  font-size: 15px; font-weight: 600; letter-spacing: -0.01em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.destaque-atual .valor { font-size: 24px; }
 .valor.destaque { color: var(--critico); }
 .valor.menor { font-style: italic; }
-.sub { font-size: 12px; color: var(--tinta-fraca); }
+.sub { font-size: 11px; color: var(--tinta-fraca); }
 .sub.destaque { color: var(--critico); }
 
 .faixa {
   margin-top: auto;
-  background: var(--suave); border-radius: 12px;
-  padding: 10px 14px;
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  font-size: 13px; color: var(--tinta-2);
+  background: var(--suave); border-radius: 10px;
+  padding: 8px 10px;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 11.5px; color: var(--tinta-2);
 }
+.situacao { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .situacao { display: inline-flex; align-items: center; gap: 8px; }
 .ver {
-  border: none; background: none; padding: 2px 4px;
-  font-weight: 650; font-size: 13px; color: var(--tinta);
+  border: none; background: none; padding: 2px 4px; flex: none;
+  font-weight: 650; font-size: 11.5px; color: var(--tinta);
   text-decoration: underline; text-underline-offset: 3px;
 }
 .ver:hover { background: none; opacity: 0.7; }
 
-@media (max-width: 480px) {
-  .estatisticas { grid-template-columns: 1fr 1fr; }
-  .valor { font-size: 18px; }
+/* Numa coluna só o cartão volta a ter espaço: aproveita para respirar. */
+@media (max-width: 560px) {
+  .produto { padding: 20px; }
+  .thumb { width: 64px; height: 64px; font-size: 24px; }
+  .nome { font-size: 17px; }
+  .destaque-atual .valor { font-size: 26px; }
 }
 </style>

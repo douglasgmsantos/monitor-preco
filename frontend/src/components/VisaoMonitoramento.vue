@@ -29,15 +29,58 @@ const urlsAcompanhadas = computed(() => {
   return urls;
 });
 
-// A faixa de descoberta: 3 itens do catálogo ainda não acompanhados, os mais
-// baratos com preço e disponíveis. Sem dado de popularidade, barato é o
-// critério honesto que existe.
-const sugestoes = computed(() =>
-  catalogo.value
+// Descoberta a partir do que VOCÊ já monitora, e não do catálogo inteiro.
+//
+// Antes eram os 3 itens mais baratos da vitrine — o que, com 3.276 itens de dez
+// categorias, sugeria cooler para quem acompanha placa de vídeo. Agora o
+// critério é semelhança com os produtos do radar: as palavras do nome que você
+// cadastrou viram o filtro.
+const PALAVRAS_IGNORADAS = new Set([
+  "de", "da", "do", "com", "para", "por", "e", "em", "a", "o", "os", "as",
+  "placa", "kit", "gb", "tb", "mhz",   // genéricas demais neste domínio
+]);
+
+/** Palavras significativas dos produtos monitorados. */
+const termosDoRadar = computed(() => {
+  const termos = new Set();
+  for (const produto of produtos.value) {
+    for (const palavra of (produto.dados.nome || "").toLowerCase().split(/[^\wÀ-ÿ]+/)) {
+      // 3 letras é o piso: abaixo disso ("rx", "ti") casa quase tudo.
+      if (palavra.length >= 3 && !PALAVRAS_IGNORADAS.has(palavra)) termos.add(palavra);
+    }
+  }
+  return termos;
+});
+
+const MAXIMO_DE_SUGESTOES = 3;
+
+const sugestoes = computed(() => {
+  const disponiveis = catalogo.value
     .filter((i) => i.preco !== null && i.disponivel !== false)
-    .filter((i) => !urlsAcompanhadas.value.has(i.url))
-    .sort((a, b) => a.preco - b.preco)
-    .slice(0, 3));
+    .filter((i) => !urlsAcompanhadas.value.has(i.url));
+
+  // Sem produtos ainda? Não há de que se parecer — cai no mais barato, que é o
+  // critério honesto quando não se sabe nada sobre o gosto do usuário.
+  if (!termosDoRadar.value.size) {
+    return [...disponiveis].sort((a, b) => a.preco - b.preco).slice(0, MAXIMO_DE_SUGESTOES);
+  }
+
+  const pontuados = [];
+  for (const item of disponiveis) {
+    const palavras = (item.nome || "").toLowerCase().split(/[^\wÀ-ÿ]+/);
+    let pontos = 0;
+    for (const palavra of new Set(palavras)) {
+      if (termosDoRadar.value.has(palavra)) pontos += 1;
+    }
+    if (pontos > 0) pontuados.push({ item, pontos });
+  }
+
+  return pontuados
+    // Mais parecido primeiro; empate desempata pelo mais barato.
+    .sort((a, b) => b.pontos - a.pontos || a.item.preco - b.item.preco)
+    .slice(0, MAXIMO_DE_SUGESTOES)
+    .map((p) => p.item);
+});
 
 // ---------------------------------------------------------------------------
 // Busca e paginação do radar
@@ -46,7 +89,10 @@ const sugestoes = computed(() =>
 // se parecem, então filtrar tem de funcionar do mesmo jeito nas duas.
 // ---------------------------------------------------------------------------
 
-const POR_PAGINA = 4;
+// Duas fileiras completas na grade de 4 colunas. Com 4 por página a paginação
+// aparecia a partir do quinto produto e mostrava uma fileira só — mais clique
+// do que conteúdo.
+const POR_PAGINA = 8;
 const busca = ref("");
 const pagina = ref(1);
 const filtros = ref({
@@ -176,7 +222,9 @@ function acompanharItem(item) {
     <!-- Descoberta -->
     <section v-if="sugestoes.length" class="descoberta">
       <p class="olho">Descoberta</p>
-      <h2 class="titulo-secao">Sugestões do catálogo</h2>
+      <h2 class="titulo-secao">
+        {{ termosDoRadar.size ? "Parecidos com o que você monitora" : "Sugestões do catálogo" }}
+      </h2>
       <div class="grade-descoberta">
         <CartaoDescoberta
           v-for="item in sugestoes"
@@ -250,11 +298,15 @@ function acompanharItem(item) {
 }
 .busca { flex: 1; min-width: 180px; }
 
+/* 4 por linha no desktop. Os pontos de quebra saem da LARGURA MÍNIMA em que o
+   cartão ainda cabe legível (~250px), não de tamanhos redondos de tela. */
 .grade-produtos {
-  display: grid; gap: 18px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: grid; gap: 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
-@media (max-width: 840px) { .grade-produtos { grid-template-columns: 1fr; } }
+@media (max-width: 1180px) { .grade-produtos { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 900px)  { .grade-produtos { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px)  { .grade-produtos { grid-template-columns: 1fr; } }
 
 .paginacao {
   display: flex; align-items: center; justify-content: center;

@@ -177,11 +177,22 @@ def esta_na_hora(
     ultima: datetime | None, agora: datetime, intervalo_horas: int
 ) -> bool:
     """True quando o intervalo real já passou. `None` significa primeira vez."""
+    return _ja_passou(ultima, agora, timedelta(hours=intervalo_horas))
+
+
+def esta_no_minuto(
+    ultima: datetime | None, agora: datetime, intervalo_minutos: int
+) -> bool:
+    """Idem, para a coleta — que é medida em minutos desde que passou a 30 min."""
+    return _ja_passou(ultima, agora, timedelta(minutes=intervalo_minutos))
+
+
+def _ja_passou(ultima: datetime | None, agora: datetime, intervalo: timedelta) -> bool:
     if ultima is None:
         return True
     if ultima.tzinfo is None:
         ultima = ultima.replace(tzinfo=timezone.utc)
-    return (agora - ultima) >= timedelta(hours=intervalo_horas)
+    return (agora - ultima) >= intervalo
 
 
 async def executar_ciclo(
@@ -215,8 +226,8 @@ async def executar_ciclo(
 
         # Passos 3 e 4 — a cadência vem de sistema/controle, nunca do cron.
         ultima = repositorio.ler_controle()
-        if not esta_na_hora(ultima, agora, cfg.intervalo_coleta_horas):
-            proxima = ultima + timedelta(hours=cfg.intervalo_coleta_horas)
+        if not esta_no_minuto(ultima, agora, cfg.intervalo_coleta_minutos):
+            proxima = ultima + timedelta(minutes=cfg.intervalo_coleta_minutos)
             logger.info(
                 "fora da janela de coleta (última em %s, próxima a partir de %s)",
                 ultima, proxima,

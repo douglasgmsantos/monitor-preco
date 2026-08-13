@@ -9,8 +9,14 @@ import { computed, onUnmounted, ref } from "vue";
 import { formatarBRL, paraCentavos } from "../dinheiro.js";
 
 const props = defineProps({
-  // Lojas presentes nos produtos — só se oferece filtro do que existe.
+  // Lojas presentes nos itens — só se oferece filtro do que existe.
   lojas: { type: Array, default: () => [] },
+  // Categorias, quando a tela tem (catálogo). Vazio = a seção não aparece.
+  categorias: { type: Array, default: () => [] },
+  // A data filtra pela última verificação, que só existe em produto
+  // acompanhado. No catálogo não há esse dado, então a seção some — oferecer
+  // filtro que não filtra nada é pior que não oferecer.
+  comData: { type: Boolean, default: true },
 });
 const filtros = defineModel({ type: Object, required: true });
 
@@ -22,12 +28,13 @@ const rascunho = ref(vazio());
 
 function vazio() {
   return {
-    ordem: "",        // "menor" | "maior" | "recentes"
+    ordem: "",        // "menor" | "maior" | "recentes" | "nome"
     precoMin: "",
     precoMax: "",
     desde: "",        // AAAA-MM-DD
     ate: "",
     loja: "",
+    categoria: "",
   };
 }
 
@@ -82,7 +89,13 @@ const ROTULOS_DE_ORDEM = {
   menor: "Menor valor",
   maior: "Maior valor",
   recentes: "Verificados recentemente",
+  nome: "Nome (A–Z)",
 };
+
+/** "Verificados recentemente" só existe onde há data de verificação. */
+const ordensDisponiveis = computed(() =>
+  Object.entries(ROTULOS_DE_ORDEM).filter(
+    ([valor]) => props.comData || valor !== "recentes"));
 
 function dataLegivel(iso) {
   // `new Date('2026-08-13')` é interpretado como UTC e volta um dia no fuso do
@@ -99,6 +112,7 @@ const chips = computed(() => {
     lista.push({ chave: "ordem", texto: ROTULOS_DE_ORDEM[f.ordem] || f.ordem });
   }
   if (f.loja) lista.push({ chave: "loja", texto: `Loja: ${f.loja}` });
+  if (f.categoria) lista.push({ chave: "categoria", texto: `Categoria: ${f.categoria}` });
   if (f.precoMin !== null && f.precoMin !== undefined && f.precoMin !== "") {
     lista.push({ chave: "precoMin", texto: `A partir de ${formatarBRL(f.precoMin)}` });
   }
@@ -144,7 +158,7 @@ function remover(chave) {
       <div class="campo-grupo">
         <span class="rotulo-filtro">Ordenar por</span>
         <div class="opcoes">
-          <button v-for="(texto, valor) in ROTULOS_DE_ORDEM" :key="valor"
+          <button v-for="[valor, texto] in ordensDisponiveis" :key="valor"
                   :aria-pressed="String(rascunho.ordem === valor)"
                   @click="rascunho.ordem = rascunho.ordem === valor ? '' : valor">
             {{ texto }}
@@ -160,8 +174,18 @@ function remover(chave) {
         </select>
       </div>
 
+      <div v-if="categorias.length" class="campo-grupo">
+        <span class="rotulo-filtro">Categoria</span>
+        <select v-model="rascunho.categoria" class="campo">
+          <option value="">todas</option>
+          <option v-for="c in categorias" :key="c.valor" :value="c.valor">
+            {{ c.rotulo }}
+          </option>
+        </select>
+      </div>
+
       <div class="campo-grupo">
-        <span class="rotulo-filtro">Faixa de preço atual</span>
+        <span class="rotulo-filtro">Faixa de preço</span>
         <div class="dupla">
           <input v-model="rascunho.precoMin" class="campo mono" inputmode="decimal"
                  placeholder="de 1.000,00" aria-label="Preço mínimo">
@@ -170,7 +194,7 @@ function remover(chave) {
         </div>
       </div>
 
-      <div class="campo-grupo">
+      <div v-if="comData" class="campo-grupo">
         <span class="rotulo-filtro">Última verificação</span>
         <div class="dupla">
           <input v-model="rascunho.desde" class="campo" type="date" aria-label="Desde">

@@ -59,7 +59,8 @@ onMounted(() => {
     nome.value = edicao.value.dados.nome || "";
     // reais na entrada, centavos no armazenamento
     // reais na entrada, centavos no armazenamento
-    valorMin.value = formatarBRL(edicao.value.dados.valorMinCentavos).replace("R$", "").trim();
+    const min = edicao.value.dados.valorMinCentavos;
+    valorMin.value = min ? formatarBRL(min).replace("R$", "").trim() : "";
     valorMax.value = formatarBRL(edicao.value.dados.valorMaxCentavos).replace("R$", "").trim();
     for (const fonte of edicao.value.fontes) {
       fontes.push(novaLinha({ loja: fonte.loja, url: fonte.url, fonteId: fonte.id }));
@@ -145,21 +146,31 @@ function lerFormulario() {
     return null;
   }
 
-  const minCentavos = paraCentavos(valorMin.value);
-  if (minCentavos === null) {
-    erro.value = "Valor mínimo inválido. Use o formato 1.789,90 ou 1789.90.";
-    return null;
-  }
+  // O MÁXIMO é obrigatório — é ele que dispara o alerta. Sem ele o produto
+  // seria um monitor que nunca notifica.
   const maxCentavos = paraCentavos(valorMax.value);
   if (maxCentavos === null) {
-    erro.value = "Valor máximo inválido. Use o formato 1.789,90 ou 1789.90.";
+    erro.value = valorMax.value.trim()
+      ? "Valor máximo inválido. Use o formato 1.789,90 ou 1789.90."
+      : "Informe o valor máximo — é ele que dispara o alerta.";
     return null;
   }
-  // Mesma checagem das security rules. Aqui é só para a mensagem ser útil: uma
-  // faixa invertida seria recusada pelo servidor com um erro genérico.
-  if (maxCentavos < minCentavos) {
-    erro.value = "O valor máximo precisa ser maior ou igual ao mínimo.";
-    return null;
+
+  // O MÍNIMO é opcional: em branco vira null. Ele não decide nada, então exigir
+  // um número que não faz nada seria atrito à toa.
+  let minCentavos = null;
+  if (valorMin.value.trim()) {
+    minCentavos = paraCentavos(valorMin.value);
+    if (minCentavos === null) {
+      erro.value = "Valor mínimo inválido. Use o formato 1.789,90 ou 1789.90.";
+      return null;
+    }
+    // Mesma checagem das security rules. Aqui é só para a mensagem ser útil: o
+    // servidor recusaria com um erro genérico.
+    if (maxCentavos < minCentavos) {
+      erro.value = "O valor máximo precisa ser maior ou igual ao mínimo.";
+      return null;
+    }
   }
 
   const lidas = [];
@@ -253,7 +264,7 @@ async function salvar() {
 
       <div class="dupla">
         <div>
-          <label class="rotulo-campo" for="m-min">Valor mínimo</label>
+          <label class="rotulo-campo" for="m-min">Valor mínimo <span class="opcional">(opcional)</span></label>
           <input id="m-min" v-model="valorMin" class="campo mono" inputmode="decimal"
                  placeholder="1.500,00">
         </div>
@@ -265,8 +276,8 @@ async function salvar() {
       </div>
       <p class="dica-faixa">
         O <strong>máximo</strong> é o que dispara o alerta — você é avisado assim
-        que o preço ficar igual ou abaixo dele. O mínimo é a sua referência de
-        preço ideal e não dispara nada.
+        que o preço ficar igual ou abaixo dele. O mínimo é só a sua referência de
+        preço ideal: pode deixar em branco.
       </p>
 
       <label class="rotulo-campo">Fontes (loja + URL)</label>
@@ -363,6 +374,7 @@ async function salvar() {
 }
 .dica-busca { margin: -4px 0 0; font-size: 12px; color: var(--tinta-2); }
 
+.opcional { font-weight: 400; color: var(--tinta-fraca); text-transform: none; }
 .dica-faixa {
   margin: -4px 0 0; font-size: 12px; line-height: 1.45;
   color: var(--tinta-2);

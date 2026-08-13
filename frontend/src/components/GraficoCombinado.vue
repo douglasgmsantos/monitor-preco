@@ -20,7 +20,7 @@ const props = defineProps({
 
 // Coordenadas internas. O SVG escala sozinho via viewBox, então estes números
 // são só proporção — não pixels.
-const L = 8, R = 8, TOPO = 18, BASE = 22;
+const L = 8, R = 8, TOPO = 18, BASE = 34;   // BASE abriga os rótulos do eixo
 const LARGURA = 600, ALTURA = 200;
 
 const porHora = computed(() => props.periodo === "dia");
@@ -88,6 +88,18 @@ const rotulados = computed(() =>
 
 const yMedia = computed(() => (props.media === null ? null : y(props.media)));
 
+// Rótulo de período por coluna. Com 30 barras não cabe um em cada — escrever
+// todos vira borrão. Mostra no máximo 8, espaçados por igual, e SEMPRE o
+// último: "hoje" é a referência que o olho procura primeiro.
+const MAXIMO_DE_ROTULOS_NO_EIXO = 8;
+
+const rotulosDoEixo = computed(() => {
+  const total = barras.value.length;
+  if (!total) return [];
+  const passo = Math.max(1, Math.ceil(total / MAXIMO_DE_ROTULOS_NO_EIXO));
+  return barras.value.filter((_, i) => i % passo === 0 || i === total - 1);
+});
+
 /** Valor curto para caber sobre a barra: "4,7k" em vez de "R$ 4.699,99". */
 function curto(centavos) {
   const reais = centavos / 100;
@@ -122,6 +134,12 @@ function curto(centavos) {
       </g>
 
       <text
+        v-for="b in rotulosDoEixo" :key="`e-${b.chave}`"
+        class="rotulo-eixo"
+        :x="b.centro" :y="ALTURA - 8" text-anchor="middle"
+      >{{ quandoLegivel(b.quando) }}</text>
+
+      <text
         v-for="b in rotulados" :key="`r-${b.chave}`"
         class="rotulo-valor" :class="{ minima: b.eMinimo }"
         :x="b.centro" :y="b.y - 5" text-anchor="middle"
@@ -136,10 +154,6 @@ function curto(centavos) {
       <span class="item"><i class="amostra minima"></i>Menor preço</span>
     </div>
 
-    <div class="eixo dica">
-      <span>{{ serie.length ? quandoLegivel(serie[0].quando) : "" }}</span>
-      <span>{{ porHora ? "agora" : "hoje" }}</span>
-    </div>
   </div>
 </template>
 
@@ -166,6 +180,8 @@ svg {
 }
 .rotulo-valor.minima { fill: var(--critico); }
 
+.rotulo-eixo { font-size: 10px; fill: var(--tinta-fraca); }
+
 .legenda {
   display: flex; flex-wrap: wrap; gap: 16px;
   font-size: 12px; color: var(--tinta-2);
@@ -178,5 +194,4 @@ svg {
   height: 0; border-top: 2px dashed var(--tinta); border-radius: 0; opacity: 0.75;
 }
 
-.eixo { display: flex; justify-content: space-between; padding: 0 4px; }
 </style>
