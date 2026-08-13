@@ -27,6 +27,7 @@ import httpx
 import pytest
 import respx
 
+from coletor.captura import parece_html_escapado
 from coletor.coleta import (
     LIMITE_FALHAS_SEGUIDAS, LimitadorPorHost, coletar_fonte, validar_fonte_pendente,
 )
@@ -53,20 +54,43 @@ CANONICAS = {
 NOMES_DE_TEMPLATE = ("amazon", "pichau", "terabyte")
 
 
-def templates_presentes() -> bool:
-    return all(
-        (TEMPLATES / f"{nome}-produto-detalhes.html").is_file()
-        for nome in NOMES_DE_TEMPLATE
-    )
+def _problema_dos_templates() -> str | None:
+    """Motivo para pular, ou None quando as três capturas servem.
+
+    Ausente e ESCAPADA são a mesma categoria — arquivo que não dá para usar — e
+    por isso pulam do mesmo jeito. A diferença está no motivo, que precisa
+    nomear o arquivo: a captura escapada parece saudável (tamanho certo, abre no
+    editor) e o sintoma que ela produz (`sem_jsonld`) aponta para a loja, não
+    para o arquivo. Sem esta mensagem, a caça ao defeito começa no lugar errado.
+    """
+    faltando, escapados = [], []
+    for nome in NOMES_DE_TEMPLATE:
+        caminho = TEMPLATES / f"{nome}-produto-detalhes.html"
+        if not caminho.is_file():
+            faltando.append(caminho.name)
+        elif parece_html_escapado(caminho.read_text(encoding="utf-8", errors="replace")):
+            escapados.append(caminho.name)
+
+    if escapados:
+        return (
+            f"captura(s) com as aspas ESCAPADAS: {', '.join(escapados)}. "
+            "O HTML passou por JSON.stringify e não foi desescapado, então nada "
+            "casa — nem seletor, nem JSON-LD. Recapture salvando o HTML cru. "
+            "Ver README, seção 'Lojas suportadas'."
+        )
+    if faltando:
+        return (
+            f"capturas ausentes em {TEMPLATES}: {', '.join(faltando)} "
+            "(não versionadas — ver .gitignore). Sem elas os seletores da Amazon "
+            "e o JSON-LD de Pichau/Terabyte não são verificados. "
+            "Recriar: README, seção 'Lojas suportadas'."
+        )
+    return None
 
 
 precisa_de_templates = pytest.mark.skipif(
-    not templates_presentes(),
-    reason=(
-        f"capturas ausentes em {TEMPLATES} (não versionadas — ver .gitignore). "
-        "Sem elas os seletores da Amazon e o JSON-LD de Pichau/Terabyte não são "
-        "verificados. Recriar: README, seção 'Lojas suportadas'."
-    ),
+    _problema_dos_templates() is not None,
+    reason=_problema_dos_templates() or "",
 )
 
 
@@ -249,6 +273,20 @@ def test_desafio_do_cloudflare_e_reconhecido():
     )
 
 
+def test_pagina_de_manutencao_da_pichau_e_reconhecida():
+    """A Pichau bloqueia com HTTP 200 e uma página de 119 KB sem preço nenhum.
+
+    Capturada em 2026-08-13 pelo n8n, de rede residencial — ou seja, ela recusa
+    até fora do datacenter. É o caso mais traiçoeiro da família: status 200,
+    corpo grande, HTML bem formado. Sem esta marca o parser dizia `sem_jsonld`,
+    que é erro de PARSE e condena a fonte como se a LOJA tivesse parado de
+    publicar dados estruturados.
+    """
+    assert parece_pagina_de_bloqueio(
+        '<html><head><title>Site em Manutenção - Pru Pru</title></head><body></body></html>'
+    )
+
+
 @precisa_de_templates
 def test_template_legitimo_nao_e_confundido_com_bloqueio():
     for nome in ("amazon", "pichau", "terabyte"):
@@ -361,6 +399,11 @@ def test_dom_respeita_o_teto():
 
 URL_AMAZON = "https://www.amazon.com.br/ASUS-RTX5070/dp/B0DVH3R5WN"
 
+# KaBuM é a única loja que segue em busca="direta" — os testes do caminho HTTP
+# precisam de uma, e apontá-los para uma loja "capturada" faria o coletor ir ao
+# Firestore em vez de à rede, sem exercitar nada do que eles verificam.
+URL_DIRETA = "https://www.kabum.com.br/produto/1"
+
 
 @dataclass
 class FonteFalsa:
@@ -455,20 +498,21 @@ async def test_coleta_da_kabum_mantem_o_user_agent_honesto(limitador):
 @pytest.mark.asyncio
 @respx.mock
 async def test_bloqueio_nao_condena_a_fonte_pendente(limitador):
-    """O 200-sem-produto da Amazon precisa manter a fonte viva.
+    """Página de bloqueio no caminho DIRETO precisa manter a fonte viva.
 
     Se `pagina_de_bloqueio` entrasse em ERROS_DE_PARSE, a primeira validação
     marcaria a fonte como inválida e o usuário veria "URL não legível" para uma
     URL perfeitamente boa que a loja recusou naquele instante.
     """
-    respx.get(URL_AMAZON).mock(
-        return_value=httpx.Response(200, html="<html><body>nada aqui</body></html>")
+    respx.get(URL_DIRETA).mock(
+        return_value=httpx.Response(
+            200, html="<html><head><title>Just a moment...</title></head></html>")
     )
     repositorio = RepositorioFalso()
 
     async with httpx.AsyncClient() as cliente:
         resultado = await validar_fonte_pendente(
-            FonteFalsa(), cliente, repositorio,
+            FonteFalsa(loja="KaBuM", url=URL_DIRETA), cliente, repositorio,
             user_agent=UA_HONESTO, teto_centavos=100_000_000, limitador=limitador,
         )
 
@@ -481,14 +525,16 @@ async def test_bloqueio_nao_condena_a_fonte_pendente(limitador):
 @respx.mock
 async def test_bloqueio_persistente_acaba_condenando(limitador):
     """Insistir para sempre também seria errado: na quinta, desiste."""
-    respx.get(URL_AMAZON).mock(
-        return_value=httpx.Response(200, html="<html><body>nada</body></html>")
+    respx.get(URL_DIRETA).mock(
+        return_value=httpx.Response(
+            200, html="<html><head><title>Just a moment...</title></head></html>")
     )
     repositorio = RepositorioFalso()
 
     async with httpx.AsyncClient() as cliente:
         await validar_fonte_pendente(
-            FonteFalsa(falhas_seguidas=LIMITE_FALHAS_SEGUIDAS - 1),
+            FonteFalsa(loja="KaBuM", url=URL_DIRETA,
+                       falhas_seguidas=LIMITE_FALHAS_SEGUIDAS - 1),
             cliente, repositorio,
             user_agent=UA_HONESTO, teto_centavos=100_000_000, limitador=limitador,
         )
@@ -527,8 +573,7 @@ async def test_cloudflare_no_terabyte_e_bloqueio_e_nao_erro_de_parse(limitador):
     `Just a moment...`. Sem isso, o desafio vinha como `sem_jsonld` — erro de
     parse — e condenava a fonte em 5 ciclos por um problema de transporte.
     """
-    url = "https://www.terabyteshop.com.br/produto/1/x"
-    respx.get(url).mock(
+    respx.get(URL_DIRETA).mock(
         return_value=httpx.Response(
             403, html="<html><head><title>Just a moment...</title></head></html>"
         )
@@ -537,7 +582,7 @@ async def test_cloudflare_no_terabyte_e_bloqueio_e_nao_erro_de_parse(limitador):
 
     async with httpx.AsyncClient() as cliente:
         resultado = await validar_fonte_pendente(
-            FonteFalsa(loja="Terabyte Shop", url=url), cliente, repositorio,
+            FonteFalsa(loja="KaBuM", url=URL_DIRETA), cliente, repositorio,
             user_agent=UA_HONESTO, teto_centavos=100_000_000, limitador=limitador,
         )
 

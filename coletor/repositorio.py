@@ -38,6 +38,14 @@ DOC_CONTROLE_RASPAGEM = "controle_raspagem"
 # listagem é o "de" (tabela), 10% a 31% acima do preço real da página do
 # produto, então ele não serve para histórico nem para alerta. A série de
 # verdade começa quando o usuário favorita, e vem da página do produto.
+# Caixa de correio do n8n: HTML capturado por fora, um documento por fonte.
+#
+# Coleção RAIZ e sem regra em firestore.rules — o catch-all nega tudo, e é assim
+# que tem de ficar. Só o Admin SDK escreve e lê. O id é o da fonte, então cada
+# captura sobrescreve a anterior: são ~7 documentos para sempre, sem rotina de
+# limpeza para falhar em silêncio. Ver `coletor/captura.py`.
+COLECAO_PAGINAS = "paginas"
+
 COLECAO_CATALOGO = "catalogo"
 COLECAO_ITENS = "itens"
 COLECAO_INDICE = "indice"
@@ -608,6 +616,17 @@ class Repositorio:
         self._db.collection(COLECAO_SISTEMA).document(DOC_CONTROLE).set(
             {"ultimaColetaEm": agora}, merge=True
         )
+
+    # --- páginas capturadas por fora (n8n) ----------------------------------
+
+    def ler_pagina_capturada(self, fonte_id: str) -> dict | None:
+        snapshot = self._db.collection(COLECAO_PAGINAS).document(fonte_id).get()
+        return (snapshot.to_dict() or None) if snapshot.exists else None
+
+    def gravar_pagina_capturada(self, fonte_id: str, documento: dict) -> None:
+        """Escrita que normalmente é do n8n. Existe aqui para os testes e para o
+        utilitário de captura manual (`python -m coletor.capturar`)."""
+        self._db.collection(COLECAO_PAGINAS).document(fonte_id).set(documento)
 
     # --- média de 30 dias --------------------------------------------------
 

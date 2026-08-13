@@ -24,24 +24,19 @@ DUAS ESTRATÉGIAS DE EXTRAÇÃO
 `dom`     seletores de CSS na marra. Só quando não há JSON-LD, porque depende do
           layout e quebra sem aviso. Hoje: apenas Amazon.
 
-O QUE FOI MEDIDO EM 2026-08-12
-------------------------------
-Rodando `extrair_preco` contra os templates em `coletor/templates/`:
+DE ONDE VEM O HTML (campo `busca`)
+----------------------------------
+Medido em produção, 2026-08-13. O runner do GitHub é IP de datacenter e leva 403
+de três das quatro lojas; as MESMAS URLs respondem de rede residencial. Daí o
+caminho `capturada`, em que um n8n busca e grava em `paginas/{fonteId}`:
 
-    Pichau     R$ 5.529,40  InStock   origem=j     ← JSON-LD, zero código novo
-    Terabyte   R$ 4.599,90  InStock   origem=j     ← JSON-LD, zero código novo
-    Amazon     sem_jsonld                          ← precisou de DOM
+    KaBuM      direta      única que o runner alcança. Fica direta de propósito:
+                           depender do n8n para ela seria trocar o que funciona
+    Terabyte   capturada   403 no runner; pelo n8n leu R$ 3.399,99 e R$ 1.349,99
+    Amazon     capturada   pelo n8n leu R$ 3.798,83 (origem d)
+    Pichau     capturada   NÃO FUNCIONA NEM ASSIM — ver a observação dela
 
-E buscando as três ao vivo, desta máquina:
-
-    Amazon     HTTP 200 com UA de navegador (1,25 MB, tudo no lugar)
-               HTTP 200 com UA honesto      (221 KB, NENHUMA marcação de produto)
-    Pichau     HTTP 403 nos dois casos — página de bloqueio própria
-    Terabyte   HTTP 403 nos dois casos — "Just a moment..." (Cloudflare)
-
-O 403 de Pichau e Terabyte foi medido DESTA máquina, e não vale como veredito de
-produção: reputação de IP é por IP, e a raspagem do Terabyte funciona hoje a
-partir do runner. Só a produção decide. Ver README, seção de lojas.
+Ver `coletor/captura.py` e o README, seção "HTML capturado por fora (n8n)".
 """
 
 import logging
@@ -167,7 +162,18 @@ class Loja:
     nome: str
     dominios: tuple[str, ...]
     estrategia: str                      # "jsonld" | "dom"
+    # De onde vem o HTML:
+    #   "direta"     o coletor busca por HTTP. É o padrão, e continua sendo o
+    #                caminho de quem já funciona — trocar KaBuM por um n8n que
+    #                pode estar fora do ar seria piorar o que está de pé.
+    #   "capturada"  outro processo (n8n com navegador) buscou e gravou em
+    #                `paginas/{fonteId}`. Ver `coletor/captura.py`.
+    busca: str = "direta"
     seletores: SeletoresDeProduto | None = None
+    # Só têm efeito quando busca="direta" — quem busca no caminho capturado é o
+    # n8n, e nada desta tabela chega até ele. Ficam registrados mesmo assim:
+    # são o que se sabe sobre como a loja precisa ser buscada, valem se ela
+    # voltar para "direta", e o nó do n8n usa exatamente estes mesmos valores.
     cabecalhos: dict[str, str] = field(default_factory=dict)
     # Regex de um grupo que captura o preço à vista no estado embutido. Quando
     # presente, VENCE o preço da estratégia — e a ausência dele na página é erro,
@@ -180,6 +186,8 @@ class Loja:
     def __post_init__(self) -> None:
         if self.estrategia == "dom" and self.seletores is None:
             raise ValueError(f"{self.nome}: estratégia dom exige seletores")
+        if self.busca not in ("direta", "capturada"):
+            raise ValueError(f"{self.nome}: busca inválida ({self.busca!r})")
 
 
 LOJAS: tuple[Loja, ...] = (
@@ -187,42 +195,61 @@ LOJAS: tuple[Loja, ...] = (
         nome="KaBuM",
         dominios=("kabum.com.br",),
         estrategia="jsonld",
+        # Fica em "direta" de propósito: é a única que responde ao runner, e
+        # fazê-la depender do n8n seria trocar o que funciona pelo que talvez.
         observacao="em produção desde o início; único caso confirmado no runner",
     ),
     Loja(
         nome="Terabyte Shop",
         dominios=("terabyteshop.com.br",),
         estrategia="jsonld",
+        busca="capturada",
         observacao=(
-            "JSON-LD verificado no template (R$ 4.599,90). Cloudflare recusou "
-            "esta máquina em 2026-08-12; a raspagem de listagem funciona no runner"
+            "JSON-LD verificado. O runner toma http_403; pelo n8n, de rede "
+            "residencial, leu R$ 3.399,99 e R$ 1.349,99 em 2026-08-13"
         ),
     ),
     Loja(
         nome="Pichau",
         dominios=("pichau.com.br",),
         estrategia="jsonld",
+        busca="capturada",
         # O JSON-LD dela dá o parcelado; o preço que interessa vem do estado.
         padrao_preco_avista=PADRAO_AVISTA_PICHAU,
         observacao=(
-            "única loja cujo JSON-LD NÃO é o preço à vista: ele traz o "
-            "final_price (R$ 5.529,40) e o à vista (R$ 4.699,99) mora só no "
-            "estado embutido. Também é intermitente: aprovou a 200 e deu 403 na "
-            "coleta 60s depois, em 2026-08-12"
+            "PROBLEMÁTICA. Única loja cujo JSON-LD não é o preço à vista (traz o "
+            "final_price; o à vista mora no estado embutido). E bloqueia de "
+            "TODO lugar: 403 do runner, e pelo n8n de rede residencial devolve "
+            "HTTP 200 com 'Site em Manutenção' e zero preço (2026-08-13). Ligada "
+            "em 'capturada' a pedido; enquanto ela recusar, acumula "
+            "pagina_de_bloqueio — que é transporte e não condena a fonte"
         ),
     ),
     Loja(
         nome="Amazon",
         dominios=("amazon.com.br",),
         estrategia="dom",
+        busca="capturada",
         seletores=SELETORES_AMAZON,
         cabecalhos=CABECALHOS_DE_NAVEGADOR,
         observacao=(
-            "sem JSON-LD; DOM verificado no template e ao vivo. EXIGE cabeçalhos "
-            "de navegador: com UA honesto a página vem sem marcação de produto"
+            "sem JSON-LD; DOM verificado no template, ao vivo e por captura "
+            "(R$ 3.798,83 em 2026-08-13). EXIGE cabeçalhos de navegador — com UA "
+            "honesto a página vem sem marcação de produto — e o nó do n8n manda "
+            "exatamente os mesmos"
         ),
     ),
 )
+
+
+def busca_de(url: str) -> str:
+    """Como o HTML desta URL chega: "direta" (HTTP no coletor) ou "capturada".
+
+    Loja fora do registro busca direto — é o comportamento que sempre existiu, e
+    fonte antiga não pode parar de ser coletada por causa de uma tabela nova.
+    """
+    loja = loja_de(url)
+    return loja.busca if loja is not None else "direta"
 
 
 def loja_de(url_ou_host: str) -> Loja | None:

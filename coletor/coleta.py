@@ -18,7 +18,8 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from coletor.lojas import cabecalhos_de, extrair_da_loja
+from coletor import captura
+from coletor.lojas import busca_de, cabecalhos_de, extrair_da_loja
 from coletor.parser import ERROS_DE_PARSE, ResultadoExtracao
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,10 @@ class RepositorioDeColeta(Protocol):
     def registrar_tentativa_de_validacao(self, fonte: Fonte, motivo: str) -> None: ...
 
     def marcar_fonte_com_erro(self, fonte: Fonte) -> None: ...
+
+    # Só é chamado para loja com busca="capturada"; o dublê de teste de quem
+    # não usa esse caminho não precisa implementar.
+    def ler_pagina_capturada(self, fonte_id: str) -> dict | None: ...
 
 
 class Notificador(Protocol):
@@ -124,6 +129,52 @@ class LimitadorPorHost:
 
 def _eh_5xx(status: int) -> bool:
     return 500 <= status <= 599
+
+
+async def obter_html(
+    fonte: Fonte,
+    cliente: httpx.AsyncClient,
+    repositorio: RepositorioDeColeta,
+    *,
+    user_agent: str,
+    dormir=asyncio.sleep,
+    limitador: "LimitadorPorHost | None" = None,
+    horas_de_validade: int = captura.HORAS_DE_VALIDADE_PADRAO,
+) -> tuple[str | None, str | None]:
+    """O HTML da fonte, venha ele de onde vier. Devolve (html, erro).
+
+    Duas origens, escolhidas pelo registro de lojas:
+
+      direta      o coletor busca por HTTP, com o limitador de taxa por host.
+      capturada   um n8n com navegador já buscou e gravou em `paginas/{id}`.
+                  Não há requisição a fazer, e por isso NÃO passa pelo
+                  limitador: ele existe para ser bom vizinho da loja, e aqui
+                  não se toca na loja.
+    """
+    if busca_de(fonte.url) == "capturada":
+        achada, erro = captura.ler(
+            repositorio.ler_pagina_capturada(fonte.id),
+            url_esperada=fonte.url,
+            horas_de_validade=horas_de_validade,
+        )
+        if erro is not None:
+            return None, erro
+        logger.info(
+            "fonte %s: HTML capturado em %s (%s bytes)",
+            fonte.id, achada.capturado_em, achada.bytes_brutos,
+        )
+        return achada.html, None
+
+    if limitador is None:
+        return await buscar_html(
+            cliente, fonte.url, user_agent=user_agent, dormir=dormir,
+            cabecalhos=cabecalhos_de(fonte.url, user_agent),
+        )
+    async with limitador.aguardar(fonte.url):
+        return await buscar_html(
+            cliente, fonte.url, user_agent=user_agent, dormir=dormir,
+            cabecalhos=cabecalhos_de(fonte.url, user_agent),
+        )
 
 
 async def buscar_html(
@@ -219,14 +270,10 @@ async def coletar_fonte(
     dormir=asyncio.sleep,
 ) -> ResultadoColeta:
     """Coleta uma fonte e grava exatamente uma leitura, dando certo ou errado."""
-    async with limitador.aguardar(fonte.url):
-        html, erro_http = await buscar_html(
-            cliente,
-            fonte.url,
-            user_agent=user_agent,
-            dormir=dormir,
-            cabecalhos=cabecalhos_de(fonte.url, user_agent),
-        )
+    html, erro_http = await obter_html(
+        fonte, cliente, repositorio,
+        user_agent=user_agent, dormir=dormir, limitador=limitador,
+    )
 
     if erro_http is not None:
         resultado = ResultadoExtracao(None, None, False, None, erro_http)
@@ -333,14 +380,10 @@ async def validar_fonte_pendente(
     É o substituto assíncrono da validação síncrona que existiria se houvesse
     um servidor de API.
     """
-    async with limitador.aguardar(fonte.url):
-        html, erro_http = await buscar_html(
-            cliente,
-            fonte.url,
-            user_agent=user_agent,
-            dormir=dormir,
-            cabecalhos=cabecalhos_de(fonte.url, user_agent),
-        )
+    html, erro_http = await obter_html(
+        fonte, cliente, repositorio,
+        user_agent=user_agent, dormir=dormir, limitador=limitador,
+    )
 
     if erro_http is not None:
         resultado = ResultadoExtracao(None, None, False, None, erro_http)

@@ -1,0 +1,273 @@
+{
+  "name": "Monitor de Preços — captura de páginas",
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://firestore.googleapis.com/v1/projects/report-price/databases/(default)/documents:runQuery",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"structuredQuery\": {\n    \"from\": [{ \"collectionId\": \"fontes\", \"allDescendants\": true }]\n  }\n}",
+        "options": {}
+      },
+      "id": "d24038ae-c1d8-4cd4-b4b5-6be587fcb3a6",
+      "name": "Listar fontes ativas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1520,
+        496
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "IFAZtS481s9wMaCG",
+          "name": "Firebase - Monitor de preços"
+        }
+      },
+      "notes": "SEM filtro de status, e isso é deliberado.\n\nFiltrar status=ok anula o propósito do workflow: a fonte que precisa de captura é justamente a que o coletor NÃO conseguiu buscar, e essa está 'invalida'. Com o filtro o resgate nunca acontece — a fonte é inválida porque não deu para buscar, e não é buscada porque está inválida.\n\nMedido em 2026-08-13: com filtro, 5 documentos; sem filtro, 14 — incluindo as 9 que precisam de resgate.\n\nQuem decide o que capturar é o filtro de DOMÍNIO no nó seguinte."
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 3
+            }
+          ]
+        }
+      },
+      "id": "6137f9b9-9067-43c1-9e09-5d876834319d",
+      "name": "A cada 3 horas1",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        1296,
+        496
+      ],
+      "notes": "Mesma cadência do coletor (INTERVALO_COLETA_HORAS=3). Precisa ser MENOR que HORAS_DE_VALIDADE (6h) em coletor/captura.py, senão a captura vence antes de ser lida."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Converte a resposta do Firestore em itens simples e escolhe QUEM capturar.\n//\n// ATENÇÃO — DUPLICAÇÃO CONSCIENTE: esta lista precisa bater com as lojas que\n// têm busca=\"capturada\" em coletor/lojas.py. É o único lugar do workflow que\n// repete conhecimento do repositório. Mudou lá, muda aqui.\n//\n// PRECISA SER O DOMÍNIO COMPLETO. A comparação é por sufixo de rótulo\n// (host === d || host.endsWith('.' + d)), então 'pichau' NÃO casa com\n// 'www.pichau.com.br' — casa zero, em silêncio, e o workflow \"roda com sucesso\"\n// sem capturar nada.\n//\n// A KaBuM fica de fora de propósito: ela responde direto do runner, e depender\n// do n8n para ela seria trocar o que funciona pelo que talvez funcione.\n// As outras três tomam 403 do datacenter — medido em 2026-08-13, com as MESMAS\n// URLs respondendo 200 de rede residencial.\nconst DOMINIOS_PARA_CAPTURAR = [\n  'pichau.com.br',\n  'terabyteshop.com.br',\n  'amazon.com.br',\n];\n\n// Host completo, sem depender do global `URL` (o editor do Code node não o\n// reconhece e sublinha em vermelho). Mesma normalização de `_host()` em\n// coletor/lojas.py: fora userinfo, fora porta, fora 'www.'.\n//\n// NÃO troque por url.split('.')[1]. Isso devolve só o segundo rótulo e tem dois\n// furos medidos em 2026-08-13:\n//   'https://pichau.com.br/x'        -> 'com'    (sem www, a fonte some calada)\n//   'https://www.pichau.evil.com/x'  -> 'pichau' (domínio impostor PASSA)\nfunction hostDaUrl(url) {\n  const achado = /^https?:\\/\\/([^/?#]+)/i.exec(url || '');\n  if (!achado) return '';\n  return achado[1].toLowerCase().split('@').pop().split(':')[0].replace(/^www\\./, '');\n}\n\nconst saida = [];\n\nfor (const item of $input.all()) {\n  const doc = item.json.document;\n\n  // A resposta traz entradas de readTime sem documento; ignore.\n  if (!doc || !doc.name) continue;\n\n  const campos = doc.fields || {};\n  const url = campos.url?.stringValue;\n\n  if (!url) continue;\n\n  // .../fontes/{fonteId} -> o id é o último segmento do path\n  const fonteId = doc.name.split('/').pop();\n  const loja = campos.loja?.stringValue || '';\n\n  const host = hostDaUrl(url);\n  if (!host) continue;   // URL malformada: nada a buscar\n\n  const capturar = DOMINIOS_PARA_CAPTURAR.some(\n    (d) => host === d || host.endsWith('.' + d),\n  );\n  if (!capturar) continue;\n\n  saida.push({ json: { fonteId, url, loja, host } });\n}\n\nif (saida.length === 0) {\n  // Sem isto o workflow \"tem sucesso\" sem fazer nada, e você descobre semanas\n  // depois que a lista estava vazia.\n  console.warn(\n    'Nenhuma fonte para capturar. DOMINIOS_PARA_CAPTURAR está vazia? ' +\n    'Ela precisa bater com as lojas busca=\"capturada\" em coletor/lojas.py.',\n  );\n}\n\nreturn saida;"
+      },
+      "id": "1be0750e-2345-4018-9d49-ae626e70baf8",
+      "name": "Escolher o que capturar1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1744,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "f44bb686-868d-4630-962d-f8d406f66d03",
+      "name": "Uma fonte por vez1",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1968,
+        496
+      ],
+      "notes": "Serial de propósito: buscar as páginas em paralelo é o comportamento que faz loja com anti-bot bloquear. O coletor espaça 2s por host pelo mesmo motivo."
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "pt-BR,pt;q=0.9,en;q=0.8"
+            },
+            {
+              "name": "Upgrade-Insecure-Requests",
+              "value": "1"
+            },
+            {
+              "name": "Sec-Fetch-Mode",
+              "value": "navigate"
+            },
+            {
+              "name": "Sec-Fetch-Dest",
+              "value": "document"
+            }
+          ]
+        },
+        "options": {
+          "redirect": {
+            "redirect": {}
+          },
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "6869c7a6-10c2-40bb-b0d4-e12c8a1e135e",
+      "name": "Buscar a página1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2176,
+        496
+      ],
+      "notes": "responseFormat=text é OBRIGATÓRIO. Se vier como JSON, o HTML é serializado e chega ao coletor com as aspas escapadas — o erro que já aconteceu. Ver 'armadilha nº 1' no README.\n\nCabeçalhos idênticos a CABECALHOS_DE_NAVEGADOR em coletor/lojas.py: com UA honesto a Amazon devolve página sem produto.\n\nonError=continueRegularOutput: uma loja bloqueada NÃO pode impedir a captura das outras. Foi removido temporariamente em 2026-08-13 para diagnóstico — com ele ligado, toda falha era engolida e a execução terminava 'com sucesso' sem gravar nada.",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Enxuga o HTML e monta o documento no formato do Firestore REST.\n//\n// SEM require() e SEM CompressionStream: o sandbox deste n8n recusa os dois\n// (\"Module 'zlib' is disallowed\", e CompressionStream indisponível). Sobra\n// enxugar o HTML até caber no teto de 1 MiB por documento do Firestore.\n//\n// MEDIDO em 2026-08-13, com o preço conferido em cada variante:\n//\n//   Amazon    1.209 KB -> 940 KB (só style/comentários) -> 655 KB (sem scripts)\n//   Pichau      402 KB -> 178 KB                        -> 64 KB, PERDE O PREÇO\n//   Terabyte    196 KB -> 158 KB                        -> 143 KB\n//\n// O corte de <script> é o que dá folga de verdade, mas quebra a Pichau: o preço\n// à vista dela vive num <script> comum, não no ld+json. Daí a exceção abaixo.\n\nconst TETO_FIRESTORE = 1048576;   // 1 MiB por documento\n\n// Domínios cujo preço mora num <script> COMUM. Para todos os outros, só o\n// ld+json é preservado — que é onde KaBuM, Terabyte e Pichau publicam o Product,\n// e a Amazon nem usa (o preço dela está no DOM).\nconst PRECISA_DOS_SCRIPTS = ['pichau.com.br'];\n\nconst html = $json.data ?? '';\nconst { fonteId, url, loja, host } = $('Escolher o que capturar1').item.json;\n\nif (typeof html !== 'string' || html.length < 500) {\n  throw new Error(\n    `${loja}: resposta vazia ou curta demais (${html.length} chars) para ${url}. ` +\n    'A loja bloqueou, ou responseFormat não é text.',\n  );\n}\n\n// Rede de segurança contra o erro nº 1 da integração: HTML que passou por JSON\n// chega com as aspas escapadas, nada casa, e o coletor reporta `sem_jsonld`\n// apontando para a loja em vez de para o transporte.\nconst amostra = html.slice(0, 100000);\nconst aspas = (amostra.match(/\"/g) || []).length;\nconst escapadas = (amostra.match(/\\\\\"/g) || []).length;\nif (aspas > 0 && escapadas / aspas >= 0.5) {\n  throw new Error(\n    `${loja}: HTML com aspas ESCAPADAS (${escapadas}/${aspas}). ` +\n    'Passou por JSON.stringify. Confira responseFormat=text no nó de busca.',\n  );\n}\n\nconst manterScripts = PRECISA_DOS_SCRIPTS.some(\n  (d) => host === d || host.endsWith('.' + d),\n);\n\nlet enxuto = html\n  .replace(/<style\\b[^>]*>[\\s\\S]*?<\\/style>/gi, '')\n  .replace(/<!--[\\s\\S]*?-->/g, '')\n  .replace(/<svg\\b[^>]*>[\\s\\S]*?<\\/svg>/gi, '')\n  .replace(/<noscript\\b[^>]*>[\\s\\S]*?<\\/noscript>/gi, '');\n\nif (!manterScripts) {\n  // ld+json sempre fica: é onde três das quatro lojas publicam o preço.\n  enxuto = enxuto.replace(\n    /<script\\b[^>]*>[\\s\\S]*?<\\/script>/gi,\n    (bloco) => (/ld\\+json/i.test(bloco.slice(0, 120)) ? bloco : ''),\n  );\n}\n\nenxuto = enxuto.replace(/[ \\t]{2,}/g, ' ').replace(/\\n{2,}/g, '\\n');\n\n// Bytes UTF-8 sem Buffer nem TextEncoder: encodeURIComponent vira cada byte\n// não-ASCII em %XX, e trocar cada %XX por um caractere iguala comprimento a\n// contagem de bytes.\nconst bytes = (s) => encodeURIComponent(s).replace(/%[0-9A-F]{2}/gi, 'x').length;\nconst bytesEnxuto = bytes(enxuto);\n\nif (bytesEnxuto > TETO_FIRESTORE) {\n  throw new Error(\n    `${loja}: ${Math.round(bytesEnxuto / 1024)} KB depois de enxugar, ainda acima ` +\n    `do teto de 1 MiB. Página cresceu; considere cortar mais ou usar Cloud Storage.`,\n  );\n}\n\nreturn [{\n  json: {\n    fonteId,\n    loja,\n    kbOriginal: Math.round(bytes(html) / 1024),\n    kbNoDocumento: Math.round(bytesEnxuto / 1024),\n    manterScripts,\n    corpo: {\n      fields: {\n        url: { stringValue: url },\n        html: { stringValue: enxuto },\n        codificacao: { stringValue: 'texto' },\n        bytes: { integerValue: String(bytesEnxuto) },\n        capturadoEm: { timestampValue: new Date().toISOString() },\n      },\n    },\n  },\n}];"
+      },
+      "id": "6bd17134-886f-4e45-b5e0-a361fe8e4b2e",
+      "name": "Comprimir1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        496
+      ],
+      "notes": "Enxuga o HTML até caber no documento do Firestore (1 MiB). Sem require nem CompressionStream — o sandbox deste n8n recusa os dois.\n\nO corte de <script> é o que dá folga, e o ld+json é sempre preservado. A Pichau é exceção: o preço à vista dela vive num <script> comum e some se cortar.\n\nonError=continueRegularOutput: uma loja bloqueada NÃO pode impedir a captura das outras. Foi removido temporariamente em 2026-08-13 para diagnóstico — com ele ligado, toda falha era engolida e a execução terminava 'com sucesso' sem gravar nada.",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://firestore.googleapis.com/v1/projects/report-price/databases/(default)/documents/paginas/{{ $json.fonteId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.corpo) }}",
+        "options": {}
+      },
+      "id": "1ae701f2-9432-4891-beda-4cc7d8eb59bb",
+      "name": "Gravar em paginas/{fonteId}1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2624,
+        496
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "IFAZtS481s9wMaCG",
+          "name": "Firebase - Monitor de preços"
+        }
+      },
+      "notes": "PATCH sem updateMask sobrescreve o documento inteiro — que é o desejado: a captura anterior não interessa. O id ser o da fonte mantém a coleção em ~1 documento por fonte, sem limpeza.\n\nCredencial: 'Google Service Account API' (googleApi), NÃO a de OAuth2. Ligue 'Set up for use in HTTP Request node' e use o escopo https://www.googleapis.com/auth/datastore\n\nonError=continueRegularOutput: uma loja bloqueada NÃO pode impedir a captura das outras. Foi removido temporariamente em 2026-08-13 para diagnóstico — com ele ligado, toda falha era engolida e a execução terminava 'com sucesso' sem gravar nada.",
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Listar fontes ativas": {
+      "main": [
+        [
+          {
+            "node": "Escolher o que capturar1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "A cada 3 horas1": {
+      "main": [
+        [
+          {
+            "node": "Listar fontes ativas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escolher o que capturar1": {
+      "main": [
+        [
+          {
+            "node": "Uma fonte por vez1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Uma fonte por vez1": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Buscar a página1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar a página1": {
+      "main": [
+        [
+          {
+            "node": "Comprimir1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Comprimir1": {
+      "main": [
+        [
+          {
+            "node": "Gravar em paginas/{fonteId}1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gravar em paginas/{fonteId}1": {
+      "main": [
+        [
+          {
+            "node": "Uma fonte por vez1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "e393a085-4893-4999-a1f8-ae96bcb43e09",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ccf3f27277be6eeac7141484d3686d78b3aabdbf23798af2116d424a232ac051"
+  },
+  "id": "okC8x5mzRhv7uWaI",
+  "tags": []
+}

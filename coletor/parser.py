@@ -76,6 +76,12 @@ MARCAS_DE_BLOQUEIO = (
     "sorry, we just need to make sure you're not a robot",
     "request blocked",
     "access denied",
+    # A Pichau serve isto — HTTP 200, 119 KB, zero "R$" — para quem ela recusa.
+    # Visto em 2026-08-13 no HTML que o n8n capturou de rede residencial: sem
+    # esta marca, chegava como `sem_jsonld`, que é erro de PARSE e condenaria a
+    # fonte em 5 ciclos por um problema de transporte.
+    "site em manutenção",
+    "site em manutencao",
 )
 
 

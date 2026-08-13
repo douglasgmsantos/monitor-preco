@@ -10,10 +10,8 @@ varre páginas de listagem das lojas verificadas (14 categorias hoje) e monta um
 vitrine para achar o que cadastrar — o preço-alvo é a única informação que a
 vitrine não tem.
 
-A interface é o app Vue em [frontend/](frontend/) (visual "Radar"). O site é
-https://report-price.web.app — **o que está no ar ainda é o front antigo**; o
-Vue entra no próximo `firebase deploy --only hosting`. O front antigo, sem
-build, segue em `publico/` como referência e rota de retorno.
+A interface é o app Vue em [frontend/](frontend/) (visual "Radar"), publicada em
+https://report-price.web.app.
 
 **Custo: R$ 0,00.** Nenhuma peça exige cartão de crédito.
 
@@ -32,14 +30,15 @@ Outros documentos: [frontend/README.md](frontend/README.md) (decisões do front)
 | 3 | `coletor/coleta.py` | ✅ 24 testes com `respx` |
 | 4 | `coletor/alertas.py`, `notificador.py` | ✅ 31 testes, sem rede |
 | 5 | `coletor/main.py`, workflow do Actions | ✅ em produção; 1 execução bem-sucedida registrada |
-| 6 | front (`publico/`) | ✅ substituído pelo Vue; mantido como referência |
+| 6 | front sem build (`publico/`) | ✅ substituído pelo Vue e removido |
 | — | security rules | ✅ 24 testes contra o emulador (`tests/test_rules.py`) |
 | — | raspagem de catálogo (`coletor/raspagem.py`) | ✅ 14 categorias (KaBuM via JSON-LD, Terabyte via seletores DOM); vitrine acumulativa |
 | — | front Vue "Radar" (`frontend/`) | ✅ build ok; **pendente de verificação visual e deploy** |
 | — | lista fechada + Amazon por DOM (`coletor/lojas.py`) | ✅ 38 testes contra capturas reais; **Amazon nunca rodou do runner** |
+| — | captura por fora / n8n (`coletor/captura.py`, `n8n/`) | ✅ 25 testes + volta completa verificada; **nenhuma loja ligada nesse caminho ainda** |
 
 ```
-243 passed, 77 skipped        # sem o emulador do Firestore (76 pulados são dele)
+262 passed, 87 skipped        # sem o emulador do Firestore
 319 passed, 1 skipped         # com o emulador rodando
 234 passed, 86 skipped        # num clone SEM as capturas de página (ver abaixo)
 ```
@@ -95,10 +94,12 @@ a vitrine — nunca o histórico, nunca o alerta.
 ```
 monitor-precos/
 ├── coletor/      coleta, raspagem, parser, alertas, notificador (Python)
-│   ├── lojas.py    registro das lojas: domínio, estratégia, cabeçalhos
+│   ├── lojas.py    registro das lojas: domínio, estratégia, busca, cabeçalhos
+│   ├── captura.py  HTML entregue por fora (n8n) — codec e validade
+│   ├── capturar.py utilitário para subir uma captura à mão
 │   └── templates/  capturas das páginas de produto — FORA DO GIT, ver .gitignore
+├── n8n/          workflow de captura, pronto para importar
 ├── frontend/     app Vue "Radar" — o front publicado
-├── publico/      front antigo sem build — referência e rota de retorno
 ├── tests/        pytest; fixtures congeladas de páginas reais
 └── firestore.rules / firestore.indexes.json / firebase.json
 ```
@@ -280,6 +281,190 @@ loja que às vezes responde.
 
 ---
 
+## HTML capturado por fora (n8n)
+
+O coletor roda no GitHub Actions: **IP de datacenter e sem navegador**. Isso
+derruba duas classes de loja — a que bloqueia datacenter (Pichau, Amazon com UA
+honesto) e a que só monta a página com JavaScript (Mercado Livre, Shopee, ambas
+medidas com **zero ocorrências de "R$"** no HTML entregue).
+
+Um n8n com navegador, **rodando de rede residencial**, tem as duas coisas que
+faltam. O caminho entre ele e o coletor é uma coleção do Firestore.
+
+```
+   n8n (navegador, IP residencial)          GitHub Actions (coletor)
+   ────────────────────────────────         ────────────────────────
+   busca a página                            lê paginas/{fonteId}
+   gzip + base64            ──▶  Firestore  ──▶  descompacta
+   grava paginas/{fonteId}      (caixa de        extrai com os MESMOS
+                                 correio)         seletores de sempre
+```
+
+> **Isto só compensa se o n8n NÃO rodar em datacenter.** Em n8n Cloud você troca
+> um IP da Azure por outro, e a Pichau continua recusando. O ganho é o IP
+> residencial e o motor de render — não a ferramenta.
+
+### O documento que o n8n precisa escrever
+
+Coleção `paginas`, **id do documento = id da fonte** (veja com
+`python -m coletor.capturar --listar`).
+
+| Campo | Tipo | O quê |
+|---|---|---|
+| `url` | string | a URL buscada. Confere contra a fonte — se você editar a URL e o n8n ainda não tiver rebuscado, a captura antiga é recusada em vez de gravar o preço do produto errado |
+| `html` | string | o HTML em **gzip + base64** |
+| `codificacao` | string | `"gzip+base64"`, ou `"texto"` para HTML cru |
+| `bytes` | number | tamanho do HTML original, para diagnóstico |
+| `capturadoEm` | timestamp | **obrigatório** — sem ele a captura é tratada como vencida |
+
+O id ser o da fonte significa que **cada captura sobrescreve a anterior**: são
+~13 documentos para sempre, sem rotina de limpeza para falhar em silêncio.
+
+Por que comprimido: documento do Firestore tem teto de **1 MiB** e a Amazon são
+1,2 MB de HTML — não cabe cru. Medido nos cinco templates: Amazon 1.209 KB →
+358 KB, Mercado Livre 977 → 365, Shopee 925 → 255, Pichau 402 → 83, Terabyte
+298 → 53. Comprimido cabe tudo com folga.
+
+`paginas` é coleção **raiz e sem regra** em `firestore.rules` — o catch-all nega
+tudo, e é assim que tem de ficar. Só o Admin SDK lê e escreve.
+
+### ⚠️ A armadilha nº 1: aspas escapadas
+
+**Já aconteceu neste repositório**, em 2026-08-13, com uma captura do Terabyte.
+O arquivo continha literalmente os caracteres `\"` e `\n` — 4.312 aspas, **todas
+escapadas**. O HTML passou por `JSON.stringify` e foi salvo sem desescapar.
+
+O sintoma engana: o arquivo abre, o tamanho parece certo, o conteúdo está todo
+lá. Mas `type=\"application/ld+json\"` não é o mesmo atributo que
+`type="application/ld+json"`, então **nada casa** e o parser reporta
+`sem_jsonld` — apontando para a loja, não para o arquivo.
+
+E **não dá para consertar depois**: o bloco `Product` tinha `\r\n` numa avaliação
+de cliente, que virou `\\r\\n`; desfazer escape sobre escape é ambíguo. O
+conserto é sempre a montante — no n8n, entregue o campo cru (`{{ $json.data }}`),
+sem re-serializar.
+
+O coletor detecta e recusa com `captura_escapada` em vez de fingir que a loja
+mudou. Teste de 5 segundos no HTML salvo: **procure `\"`. Se achar, está
+escapado.**
+
+### O workflow pronto
+
+[n8n/captura-de-paginas.json](n8n/captura-de-paginas.json) — importe no n8n
+(Workflows → Import from File). Sete nós:
+
+```
+A cada 3 horas → Listar fontes ativas → Escolher o que capturar
+                                                ↓
+              Gravar em paginas/{id} ← Comprimir ← Buscar a página
+                        └──────────── volta para a próxima fonte
+```
+
+`Listar fontes ativas` usa a **collection group query** do Firestore REST (as
+fontes moram em `usuarios/{uid}/produtos/{id}/fontes`, então `allDescendants:
+true`) com o mesmo filtro de `listar_fontes_ativas()`. Não há lista de URLs para
+manter em lugar nenhum: o n8n descobre sozinho.
+
+**Três coisas para configurar:**
+
+| O quê | Onde |
+|---|---|
+| Credencial **Google Service Account API** | nos dois nós de HTTP que falam com o Firestore |
+| `NODE_FUNCTION_ALLOW_BUILTIN=zlib` | variável de ambiente do n8n — sem ela o nó `Comprimir` falha com *Cannot find module 'zlib'* |
+| `DOMINIOS_PARA_CAPTURAR` | dentro do nó `Escolher o que capturar`. **Começa vazia de propósito** |
+
+#### A credencial: service account, NÃO OAuth2
+
+No n8n existem duas credenciais de Firestore e elas levam a caminhos bem
+diferentes. A de **OAuth2** (`Google Firebase Cloud Firestore OAuth2 API`) pede
+Client ID e Client Secret, e exige montar tela de consentimento e client OAuth no
+Google Cloud — trabalho à toa para máquina falando com máquina. **Não é essa.**
+
+Use **`Google Service Account API`**:
+
+1. Credentials → New → busque `Google Service Account API`
+2. **Service Account Email** e **Private Key** (com as linhas
+   `-----BEGIN/END PRIVATE KEY-----`), do JSON baixado do Google Cloud
+3. Ligue **Set up for use in HTTP Request node**
+4. Em **Scope(s)**: `https://www.googleapis.com/auth/datastore`
+
+O passo 3 é o que costuma passar batido: sem ele a credencial não aparece para
+escolher no nó de HTTP Request.
+
+A conta de serviço deve ser **dedicada**, com o papel **Cloud Datastore User**
+(`roles/datastore.user`) e nada mais. Dá para usar a do `FIREBASE_SA_BASE64`, mas
+ela é a do Admin SDK — acesso total, incluindo apagar todo o histórico — para uma
+tarefa que só precisa ler `fontes` e escrever `paginas`. Se a chave dedicada
+vazar, você revoga só ela e o coletor continua de pé.
+
+Essa última lista é a **única duplicação consciente** do desenho: ela precisa
+bater com as lojas que têm `busca="capturada"` em `coletor/lojas.py`. Não há como
+o n8n importar Python, e preferi um lugar só, comentado, a espalhar a decisão.
+
+O que o workflow foi verificado fazendo, rodando o código dos nós em Node contra
+as capturas reais:
+
+| Template | Bruto | No documento |
+|---|---|---|
+| Amazon | 1.209 KB | 360 KB ✅ |
+| Mercado Livre | 977 KB | 363 KB ✅ |
+| Shopee | 925 KB | 254 KB ✅ |
+| Pichau | 402 KB | 83 KB ✅ |
+| Terabyte (a captura escapada) | — | ❌ recusada com a mensagem certa |
+
+E a volta completa: saída do nó `Comprimir` → `captura.ler()` → `extrair_da_loja`
+devolveu **R$ 4.699,99, origem `e`** para a Pichau — o mesmo valor do caminho
+direto.
+
+> **Por que HTTP Request e não navegador:** as quatro lojas do registro não
+> precisam de JavaScript, precisam de um IP que não seja datacenter. Mercado
+> Livre e Shopee precisariam de um nó de navegador (Puppeteer), mas nenhuma das
+> duas está no registro — e não estão porque não dá para lê-las de jeito nenhum
+> sem render.
+
+Quatro testes amarram o JSON ao Python (`tests/test_captura.py`): os campos que o
+nó escreve, o `responseFormat: text`, a cadência ser menor que a validade, e a
+credencial ser a de service account e não a de OAuth2. Se
+alguém renomear um campo de um lado, o teste quebra em vez de virar
+`sem_captura` num n8n que está rodando perfeitamente.
+
+### Ligar uma loja no caminho capturado
+
+Em [coletor/lojas.py](coletor/lojas.py), mude `busca` da loja para `"capturada"`.
+O padrão é `"direta"` e **assim deve continuar para KaBuM e Terabyte**: elas
+funcionam por HTTP simples há semanas: fazê-las depender de um n8n que pode estar
+fora do ar seria trocar o que está de pé pelo que talvez funcione.
+
+Para provar o caminho inteiro antes de montar o n8n, dá para subir uma captura
+salva do navegador:
+
+```bash
+set -a; source .env; set +a
+python -m coletor.capturar --listar
+python -m coletor.capturar --fonte <fonteId> --arquivo pagina.html
+```
+
+### Cinco erros que não condenam a fonte
+
+Uma captura ausente ou velha é falha do **mensageiro**, não da URL. Todos ficam
+fora de `ERROS_DE_PARSE` — se entrassem, um n8n fora do ar por meio dia marcaria
+todas as fontes como inválidas, e o usuário leria "URL não legível" para URLs
+perfeitas.
+
+| Erro | Quando |
+|---|---|
+| `sem_captura` | o n8n ainda não escreveu nada para esta fonte |
+| `captura_vencida` | mais velha que `HORAS_DE_VALIDADE` (6 h), ou sem `capturadoEm` |
+| `captura_de_outra_url` | a URL da fonte mudou e a captura é da antiga |
+| `captura_ilegivel` | não é gzip+base64 válido |
+| `captura_escapada` | ver a armadilha acima |
+
+A validade é o que impede o pior modo de falha: **sem ela, o n8n parar
+significaria o coletor reler a mesma página para sempre e gravar o mesmo preço
+como se fosse leitura nova** — série histórica inventada, sem erro em log nenhum.
+
+---
+
 ## Modelo de dados
 
 Dinheiro é **sempre inteiro de centavos**, e todo campo monetário termina em
@@ -303,6 +488,9 @@ sistema/controle                        GLOBAL (coleção raiz)
     ultimaColetaEm
 sistema/controle_raspagem
     ultimaRaspagemEm
+
+paginas/{fonteId}                       caixa de correio do n8n (raiz)
+    url, html (gzip+base64), codificacao, bytes, capturadoEm
 
 catalogo/{loja}                         GLOBAL — escrito só pelo coletor,
   └── indice/{categoria}                lido por qualquer usuário autenticado
@@ -458,7 +646,7 @@ firebase deploy --only firestore:rules,firestore:indexes
 firebase deploy --only hosting
 ```
 
-A config **pública** do front fica em `publico/firebase-config.js`. Isso não é
+A config **pública** do front fica em `frontend/src/firebase.js`. Isso não é
 segredo: a `apiKey` identifica o projeto, não autoriza nada. A proteção real são
 as rules. Não tente ofuscar.
 
@@ -543,17 +731,10 @@ cd frontend && npm install && npm run dev   # http://localhost:5173
 O deploy continua `firebase deploy --only hosting`: o `predeploy` em
 `firebase.json` instala e builda sozinho.
 
-O front antigo (HTML + JS puro, sem build) segue intacto em `publico/` como
-referência e rota de retorno:
-
-```bash
-cd publico && python3 -m http.server 8090   # localhost já é domínio autorizado
-```
-
-> Evite a porta 8080 para servir o front: é a porta do emulador do Firestore, e
-> um servidor de arquivos parado ali já travou a suíte de testes uma vez (o
-> probe dos testes hoje distingue os dois, mas não há motivo para conviver com
-> a colisão).
+> Evite a porta 8080 para qualquer servidor local: é a porta do emulador do
+> Firestore, e um servidor de arquivos parado ali já travou a suíte de testes uma
+> vez (o probe dos testes hoje distingue os dois, mas não há motivo para conviver
+> com a colisão).
 
 ---
 
@@ -663,7 +844,7 @@ execução. Ver o aviso na seção de lojas.
 - **Verificar o front Vue no navegador e fazer o primeiro deploy dele.** O build
   compila e o preview serve, mas ninguém olhou as telas renderizadas com dados
   reais. O deploy é `firebase deploy --only hosting` (o `predeploy` builda
-  sozinho); reverter é apontar `firebase.json` de volta para `publico`.
+  sozinho).
 - **Paridade do gráfico:** os quatro períodos já voltaram. Falta a escala em
   **variação %** (que permitia comparar produtos de faixas de preço diferentes) e
   a **comparação multi-produto** no mesmo eixo, que o front antigo tinha.
@@ -696,5 +877,5 @@ execução. Ver o aviso na seção de lojas.
   arquivo e o portão da fase é a execução real. `esta_na_hora` e o agrupamento
   por produto estão cobertos apenas pela verificação manual no emulador.
 - O front Vue não tem teste automatizado — a validação portada de
-  `publico/app.js` está coberta apenas pela leitura; um smoke com Vitest seria
+  do front antigo está coberta apenas pela leitura; um smoke com Vitest seria
   o próximo investimento se o front continuar crescendo.
