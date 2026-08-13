@@ -1,7 +1,8 @@
 <script setup>
-// Flutuação de 30 dias em barras, como no desenho. Uma barra por dia com
-// leitura; a barra do MENOR preço ganha o destaque vermelho — é a informação
-// acionável ("quanto já esteve mais barato").
+// Flutuação em barras, como no desenho. Uma barra por ponto da série — um dia
+// nos períodos longos, uma LEITURA no período de 24h. A barra do MENOR preço
+// ganha o destaque vermelho: é a informação acionável ("quanto já esteve mais
+// barato").
 //
 // O valor exato de cada dia está no title da barra e na tabela equivalente
 // (AnaliseDetalhada) — a regra de "nunca só a cor" vale para gráfico também.
@@ -10,7 +11,18 @@ import { formatarBRL } from "../dinheiro.js";
 
 const props = defineProps({
   serie: { type: Array, required: true },   // [{chave, quando, centavos}]
+  // No período "dia" cada barra é uma LEITURA, não um dia: o rótulo vira hora,
+  // senão todas as barras diriam a mesma data.
+  periodo: { type: String, default: "30d" },
 });
+
+const porHora = computed(() => props.periodo === "dia");
+
+function quandoLegivel(quando) {
+  return porHora.value
+    ? quando.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+    : quando.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+}
 
 const menor = computed(() =>
   props.serie.length ? Math.min(...props.serie.map((p) => p.centavos)) : null);
@@ -23,14 +35,13 @@ function altura(ponto) {
 }
 
 function titulo(ponto) {
-  const dia = ponto.quando.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
-  return `${dia} — ${formatarBRL(ponto.centavos)}`;
+  return `${quandoLegivel(ponto.quando)} — ${formatarBRL(ponto.centavos)}`;
 }
 
 const rotuloInicio = computed(() =>
-  props.serie.length
-    ? props.serie[0].quando.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })
-    : "");
+  props.serie.length ? quandoLegivel(props.serie[0].quando) : "");
+
+const rotuloFim = computed(() => (porHora.value ? "agora" : "hoje"));
 </script>
 
 <template>
@@ -48,7 +59,7 @@ const rotuloInicio = computed(() =>
     </div>
     <div class="eixo dica">
       <span>{{ rotuloInicio }}</span>
-      <span>hoje</span>
+      <span>{{ rotuloFim }}</span>
     </div>
   </div>
 </template>

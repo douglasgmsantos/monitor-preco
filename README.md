@@ -389,7 +389,8 @@ duas abas — **Monitoramento** e **Catálogo** — com o cadastro em modal:
   menor preço do período e estado (`alerta de preço baixo` / `monitorando` /
   `aguardando primeira coleta` / `pausado`)
 - **Análise detalhada** do produto selecionado: fontes com status e preço,
-  flutuação de 30 dias em barras + tabela equivalente (acessibilidade)
+  flutuação em barras com **quatro períodos** (dia / 7 dias / mensal / anual) +
+  tabela equivalente (acessibilidade)
 - **Descoberta**: sugestões do catálogo ainda não acompanhadas
 - **Catálogo**: vitrine completa com filtro por categoria, busca, ordenação e
   paginação; acompanhar um item pré-preenche o cadastro
@@ -400,10 +401,25 @@ duas abas — **Monitoramento** e **Catálogo** — com o cadastro em modal:
 - **Excluir** produto, com cascata manual (ver abaixo)
 - **Tentar de novo** numa fonte que falhou
 
-> **Diferença deliberada para o front antigo:** o gráfico de linhas com períodos
-> 1d/1s/1m/1a e escala R$/% foi substituído pela flutuação de 30 dias em barras,
-> seguindo o desenho "Radar". A lógica das séries longas continua em
-> `publico/app.js` se a paridade fizer falta — está listada em "O que falta".
+> **Diferença deliberada para o front antigo:** o gráfico de LINHAS com uma série
+> por fonte foi substituído por barras com o menor preço do período, seguindo o
+> desenho "Radar". Os quatro períodos voltaram; o que não voltou foi a escala em
+> variação % e a comparação multi-produto no mesmo eixo — ver "O que falta".
+
+**As duas origens de dado do gráfico**, e a diferença importa:
+
+| Período | Vem de | Um ponto é |
+|---|---|---|
+| **Dia** | `historico` bruto, últimas 24h | uma **leitura** (menor entre as fontes no minuto) |
+| 7 dias / mensal / anual | rollup `diario` | o fechamento do **dia** |
+
+O custo é o mesmo nos quatro, e é para isso que o bucketing existe: `diario` é 1
+documento por fonte por **ano**, então o período anual custa as mesmas leituras
+que o de 7 dias.
+
+**A "Média 30 dias" NÃO muda com o período**, de propósito. Ela é a referência do
+alerta "abaixo da média histórica" (`DIAS_DA_MEDIA` no coletor). Fazer o rótulo
+seguir o gráfico deixaria a tela dizendo um número e o Telegram outro.
 
 ### Cascata é manual, e tem que ser
 
@@ -648,9 +664,13 @@ execução. Ver o aviso na seção de lojas.
   compila e o preview serve, mas ninguém olhou as telas renderizadas com dados
   reais. O deploy é `firebase deploy --only hosting` (o `predeploy` builda
   sozinho); reverter é apontar `firebase.json` de volta para `publico`.
-- **Paridade do gráfico, se fizer falta no uso:** o front novo mostra só a
-  flutuação de 30 dias; os períodos 1d/1s/1a, a escala em variação % e a
-  comparação multi-produto do front antigo não foram portados.
+- **Paridade do gráfico:** os quatro períodos já voltaram. Falta a escala em
+  **variação %** (que permitia comparar produtos de faixas de preço diferentes) e
+  a **comparação multi-produto** no mesmo eixo, que o front antigo tinha.
+- **O seletor de período parece não fazer nada hoje**, e não é bug: o histórico
+  tem 2 dias, então 7 dias / mensal / anual mostram os mesmos 2 pontos. Só o
+  período "dia" difere (12 leituras contra 2 fechamentos). Isso se resolve
+  sozinho com o tempo.
 - **As quatro lojas nunca foram buscadas DO RUNNER.** O ciclo real de 2026-08-12
   rodou desta máquina e aprovou as quatro (ver tabela acima), mas o runner é IP
   de datacenter e a Amazon é justamente o tipo de loja que trata os dois de forma
