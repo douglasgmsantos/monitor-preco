@@ -103,9 +103,8 @@ def cenario(repositorio):
         produto_ref.set(
             {
                 "nome": "Produto de teste",
-                "precoAlvoCentavos": 100_000,
-                "toleranciaPct": 10,
-                "precoGatilhoCentavos": 110_000,
+                "valorMinCentavos": 100_000,
+                "valorMaxCentavos": 110_000,
                 "estado": "ACIMA",
                 "ultimoAlertaEm": None,
                 "ultimoPrecoAlertadoCentavos": None,
@@ -393,8 +392,8 @@ def test_carregar_produto(repositorio, cenario):
     produto = repositorio.carregar_produto(fonte.produto_ref)
 
     assert produto.nome == "Produto de teste"
-    assert produto.preco_alvo_centavos == 100_000
-    assert produto.preco_gatilho_centavos == 110_000
+    assert produto.valor_min_centavos == 100_000
+    assert produto.valor_max_centavos == 110_000
     assert produto.ativo is True
 
 
@@ -429,15 +428,19 @@ def test_transicao_silenciosa_nao_mexe_no_ultimo_alerta(repositorio, cenario):
     assert dados["ultimoPrecoAlertadoCentavos"] is None
 
 
-def test_corrigir_gatilho_reescreve_valor_do_cliente(repositorio, cenario):
+def test_o_maximo_do_cliente_e_o_gatilho_sem_intermediario(repositorio, cenario):
+    """Não existe mais campo derivado para o coletor corrigir.
+
+    Antes o cliente gravava `precoGatilhoCentavos` e o coletor o recalculava
+    todo ciclo, porque as rules aceitavam qualquer inteiro. Agora o gatilho é o
+    próprio `valorMaxCentavos`: nada a derivar, nada que possa divergir — e a
+    validação das rules é quem garante que ele é inteiro > 0 e >= o mínimo.
+    """
     fonte = cenario()
     produto = repositorio.carregar_produto(fonte.produto_ref)
-    produto.ref.update({"precoGatilhoCentavos": 999_999})  # cliente mentiu
-    produto = repositorio.carregar_produto(fonte.produto_ref)
 
-    repositorio.corrigir_gatilho(produto, 110_000)
-
-    assert produto.ref.get().to_dict()["precoGatilhoCentavos"] == 110_000
+    assert produto.valor_max_centavos == 110_000
+    assert not hasattr(repositorio, "corrigir_gatilho")
 
 
 # --- controle de cadência ---------------------------------------------------

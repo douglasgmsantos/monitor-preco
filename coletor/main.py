@@ -97,14 +97,10 @@ def avaliar_alertas(
             if produto is None or not produto.ativo:
                 continue
 
-            # O coletor é a autoridade sobre o gatilho: as rules aceitam
-            # qualquer inteiro >= alvo vindo do cliente.
-            repositorio.corrigir_gatilho(
-                produto,
-                alertas.calcular_gatilho(
-                    produto.preco_alvo_centavos, produto.tolerancia_pct
-                ),
-            )
+            # Não há gatilho a corrigir: ele É o `valorMaxCentavos` que o
+            # usuário gravou, e as rules já garantem que é inteiro > 0. O campo
+            # derivado que existia aqui era fonte de divergência, não de
+            # segurança.
 
             leituras = [
                 LeituraDoCiclo(

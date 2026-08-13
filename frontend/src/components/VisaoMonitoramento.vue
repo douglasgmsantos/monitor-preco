@@ -1,12 +1,14 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { formatarBRL } from "../dinheiro.js";
 import { nomeDaLojaPorHost, hostDaUrl } from "../lojas.js";
-import { useProdutos } from "../composables/useProdutos.js";
+import {
+  menorPrecoAtual, ultimaVerificacao, useProdutos,
+} from "../composables/useProdutos.js";
+import FiltrosProdutos from "./FiltrosProdutos.vue";
 import { useCatalogo } from "../composables/useCatalogo.js";
 import CartaoDescoberta from "./CartaoDescoberta.vue";
 import CartaoProduto from "./CartaoProduto.vue";
-import AnaliseDetalhada from "./AnaliseDetalhada.vue";
 
 const props = defineProps({
   selecionadoId: { type: String, default: null },
@@ -17,9 +19,6 @@ const emit = defineEmits([
 
 const { produtos, carregando } = useProdutos();
 const { catalogo, carregado } = useCatalogo();
-
-const selecionado = computed(() =>
-  produtos.value.find((p) => p.id === props.selecionadoId) || null);
 
 /** URLs que o usuário já acompanha, para não oferecer duas vezes. */
 const urlsAcompanhadas = computed(() => {
@@ -50,6 +49,30 @@ const sugestoes = computed(() =>
 const POR_PAGINA = 4;
 const busca = ref("");
 const pagina = ref(1);
+const filtros = ref({
+  ordem: "", precoMin: null, precoMax: null, desde: "", ate: "", loja: "",
+});
+
+/** Só as lojas que aparecem nos produtos do usuário — filtro por loja que ele
+ *  não usa é ruído. */
+const lojasPresentes = computed(() => {
+  const nomes = new Set();
+  for (const p of produtos.value) {
+    for (const f of p.fontes) if (f.loja) nomes.add(f.loja);
+  }
+  return [...nomes].sort((a, b) => a.localeCompare(b, "pt-BR"));
+});
+
+/** Fim do dia informado: o usuário que escolhe "até 13/08" espera incluir o dia
+ *  13 inteiro, não parar à meia-noite dele. */
+function fimDoDia(iso) {
+  const [ano, mes, dia] = iso.split("-").map(Number);
+  return new Date(ano, mes - 1, dia, 23, 59, 59, 999);
+}
+function inicioDoDia(iso) {
+  const [ano, mes, dia] = iso.split("-").map(Number);
+  return new Date(ano, mes - 1, dia, 0, 0, 0, 0);
+}
 
 /** Busca por nome do produto E por loja.
  *
@@ -58,12 +81,66 @@ const pagina = ref(1);
  *  algo que está na tela é o que o usuário espera poder fazer. */
 const filtrados = computed(() => {
   const texto = busca.value.trim().toLowerCase();
-  if (!texto) return produtos.value;
-  return produtos.value.filter((p) => {
-    const nome = (p.dados.nome || "").toLowerCase();
-    if (nome.includes(texto)) return true;
-    return p.fontes.some((f) => (f.loja || "").toLowerCase().includes(texto));
-  });
+  const f = filtros.value;
+  let lista = produtos.value;
+
+  if (texto) {
+    lista = lista.filter((p) => {
+      const nome = (p.dados.nome || "").toLowerCase();
+      if (nome.includes(texto)) return true;
+      return p.fontes.some((x) => (x.loja || "").toLowerCase().includes(texto));
+    });
+  }
+
+  if (f.loja) {
+    lista = lista.filter((p) => p.fontes.some((x) => x.loja === f.loja));
+  }
+
+  // Faixa de preço: sobre o preço ATUAL (menor entre as fontes). Produto sem
+  // preço fica de fora quando há filtro de faixa — não dá para afirmar que ele
+  // cabe numa faixa que não se conhece.
+  if (f.precoMin !== null || f.precoMax !== null) {
+    lista = lista.filter((p) => {
+      const preco = menorPrecoAtual(p);
+      if (preco === null) return false;
+      if (f.precoMin !== null && preco < f.precoMin) return false;
+      if (f.precoMax !== null && preco > f.precoMax) return false;
+      return true;
+    });
+  }
+
+  if (f.desde || f.ate) {
+    lista = lista.filter((p) => {
+      const quando = ultimaVerificacao(p);
+      if (!quando) return false;
+      const data = quando.toDate ? quando.toDate() : new Date(quando);
+      if (isNaN(data)) return false;
+      if (f.desde && data < inicioDoDia(f.desde)) return false;
+      if (f.ate && data > fimDoDia(f.ate)) return false;
+      return true;
+    });
+  }
+
+  if (f.ordem) {
+    // Cópia antes de ordenar: `produtos` é reativo e ordenar no lugar
+    // embaralharia a fonte para todo mundo que a observa.
+    lista = [...lista].sort((a, b) => {
+      if (f.ordem === "recentes") {
+        const da = ultimaVerificacao(a), db = ultimaVerificacao(b);
+        const ta = da ? (da.toDate ? da.toDate() : new Date(da)).getTime() : 0;
+        const tb = db ? (db.toDate ? db.toDate() : new Date(db)).getTime() : 0;
+        return tb - ta;
+      }
+      const pa = menorPrecoAtual(a), pb = menorPrecoAtual(b);
+      // Sem preço vai para o fim em qualquer ordenação: um `null` no topo da
+      // lista de "menor valor" seria mentira.
+      if (pa === null) return 1;
+      if (pb === null) return -1;
+      return f.ordem === "menor" ? pa - pb : pb - pa;
+    });
+  }
+
+  return lista;
 });
 
 const paginas = computed(() => Math.max(1, Math.ceil(filtrados.value.length / POR_PAGINA)));
@@ -74,6 +151,10 @@ const visiveis = computed(() => {
 });
 
 function aoFiltrar() { pagina.value = 1; }   // filtrar sempre volta ao começo
+
+// Mudar filtro também volta para a página 1: filtrar estando na página 3 e cair
+// numa lista vazia é o jeito mais rápido de achar que os produtos sumiram.
+watch(filtros, aoFiltrar, { deep: true });
 
 function irPara(direcao) {
   pagina.value = Math.min(Math.max(1, pagina.value + direcao), paginas.value);
@@ -111,11 +192,14 @@ function acompanharItem(item) {
       <p class="olho">Seu radar</p>
       <h2 class="titulo-secao">Produtos em acompanhamento</h2>
 
-      <div v-if="produtos.length" class="filtros">
-        <input v-model="busca" class="busca" placeholder="filtrar por nome ou loja…"
-               @input="aoFiltrar">
-        <span class="dica">{{ filtrados.length }} de {{ produtos.length }}</span>
-      </div>
+      <template v-if="produtos.length">
+        <div class="filtros">
+          <input v-model="busca" class="busca" placeholder="filtrar por nome ou loja…"
+                 @input="aoFiltrar">
+          <span class="dica">{{ filtrados.length }} de {{ produtos.length }}</span>
+        </div>
+        <FiltrosProdutos v-model="filtros" :lojas="lojasPresentes" />
+      </template>
 
       <div v-if="visiveis.length" class="grade-produtos">
         <CartaoProduto
@@ -125,6 +209,7 @@ function acompanharItem(item) {
           :selecionado="produto.id === selecionadoId"
           @selecionar="emit('selecionar', produto.id)"
           @ver-detalhes="emit('ver-detalhes', produto.id)"
+          @editar="emit('editar', $event)"
         />
       </div>
 
@@ -148,12 +233,6 @@ function acompanharItem(item) {
       </div>
     </section>
 
-    <!-- Análise detalhada do produto selecionado -->
-    <AnaliseDetalhada
-      v-if="selecionado"
-      :produto="selecionado"
-      @editar="emit('editar', $event)"
-    />
   </div>
 </template>
 

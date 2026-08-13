@@ -32,22 +32,24 @@ MARGEM_MEDIA_PCT_PADRAO = 10
 GATILHO_ALVO = "alvo"
 GATILHO_MEDIA = "media"
 
-
-def calcular_gatilho(preco_alvo_centavos: int, tolerancia_pct: int) -> int:
-    """Preço a partir do qual o alerta dispara.
-
-    Único lugar do projeto onde esta fórmula existe. Multiplicação antes da
-    divisão e divisão inteira: nenhum float encosta no valor.
-    """
-    return (preco_alvo_centavos * (100 + tolerancia_pct)) // 100
+# O GATILHO É O VALOR MÁXIMO, direto. Não existe fórmula.
+#
+# Antes havia `preco_alvo` + `tolerancia_pct`, e um `preco_gatilho` derivado que
+# o cliente gravava e o coletor precisava recalcular e corrigir a cada ciclo —
+# porque as rules aceitam qualquer inteiro e não dá para confiar no que o front
+# escreveu. Com `valor_max_centavos` o gatilho é o próprio campo: nada a derivar,
+# nada a corrigir, nada que possa divergir.
+#
+# `valor_min_centavos` NÃO participa da decisão. É referência do usuário — o
+# preço que ele considera ideal — e existe para a tela mostrar o quanto falta.
+# Fazer dele um piso do alerta significaria engolir a melhor oferta possível.
 
 
 class Produto(Protocol):
     id: str
     nome: str
-    preco_alvo_centavos: int
-    tolerancia_pct: int
-    preco_gatilho_centavos: int
+    valor_min_centavos: int
+    valor_max_centavos: int
     estado: str
     ultimo_alerta_em: datetime | None
     ultimo_preco_alertado_centavos: int | None
@@ -113,9 +115,9 @@ def avaliar(
 ) -> Decisao:
     """Aplica a tabela de estados da seção 10.1, e só depois o cooldown.
 
-    Há dois gatilhos independentes: o preço-alvo com tolerância, e o preço
+    Há dois gatilhos independentes: o valor máximo do produto e o preço
     notavelmente abaixo da média histórica. Como a condição é
-    `preco <= alvo OU preco <= limite_da_media`, o gatilho efetivo é o MAIOR
+    `preco <= maximo OU preco <= limite_da_media`, o gatilho efetivo é o MAIOR
     dos dois — o que também deixa a regra de rearme correta de graça.
     """
     validas = leituras_validas(leituras)
@@ -125,7 +127,7 @@ def avaliar(
     melhor = min(validas, key=lambda leitura: leitura.preco_centavos)
     preco = melhor.preco_centavos
 
-    gatilho_alvo = produto.preco_gatilho_centavos
+    gatilho_alvo = produto.valor_max_centavos
     limite_media = limite_pela_media(media_historica_centavos, margem_media_pct)
 
     if limite_media is not None and limite_media > gatilho_alvo:
@@ -229,14 +231,14 @@ def montar_mensagem(
     pela_media = (
         decisao is not None
         and decisao.gatilho_usado == GATILHO_MEDIA
-        and preco > produto.preco_gatilho_centavos
+        and preco > produto.valor_max_centavos
     )
     if pela_media:
         titulo = "📉 Abaixo da média histórica"
         referencia = f"(média: R$ {formatar_reais(decisao.media_historica_centavos)})"
     else:
         titulo = "🔻 Preço atingido"
-        referencia = f"(alvo: R$ {formatar_reais(produto.preco_alvo_centavos)})"
+        referencia = f"(máx: R$ {formatar_reais(produto.valor_max_centavos)})"
 
     return (
         f"{titulo}\n"

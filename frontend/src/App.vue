@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, nextTick } from "vue";
+import { computed, ref, watch } from "vue";
 import { useAuth } from "./composables/useAuth.js";
 import { useProdutos } from "./composables/useProdutos.js";
 import { useCatalogo } from "./composables/useCatalogo.js";
@@ -8,6 +8,7 @@ import TopoRadar from "./components/TopoRadar.vue";
 import VisaoMonitoramento from "./components/VisaoMonitoramento.vue";
 import VisaoCatalogo from "./components/VisaoCatalogo.vue";
 import ModalProduto from "./components/ModalProduto.vue";
+import ModalDetalhes from "./components/ModalDetalhes.vue";
 
 const { usuario, carregouAuth } = useAuth();
 const { produtos, observar, parar } = useProdutos();
@@ -16,6 +17,7 @@ const { carregarCatalogo } = useCatalogo();
 const aba = ref("monitoramento");        // "monitoramento" | "catalogo"
 const selecionadoId = ref(null);
 const modal = ref({ aberto: false, produtoId: null, prefill: null });
+const detalhesId = ref(null);
 
 watch(usuario, (quem) => {
   if (quem) {
@@ -60,11 +62,22 @@ function acompanhar(prefill) {
   abrirCriacao(prefill);
 }
 
-async function verDetalhes(produtoId) {
+/** Detalhe agora é modal, não uma seção no fim da página.
+ *  Antes isto rolava a tela até a análise: o usuário perdia o lugar na lista e,
+ *  ao voltar, não sabia de onde tinha vindo. */
+function verDetalhes(produtoId) {
   selecionadoId.value = produtoId;
-  aba.value = "monitoramento";
-  await nextTick();
-  document.getElementById("analise")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  detalhesId.value = produtoId;
+}
+
+const produtoEmDetalhe = computed(() =>
+  detalhesId.value ? produtos.value.find((p) => p.id === detalhesId.value) || null : null);
+
+/** Editar a partir do detalhe: fecha um modal e abre o outro, senão os dois
+ *  ficariam empilhados e o Esc fecharia o de cima sem o usuário perceber. */
+function editarDoDetalhe(produtoId) {
+  detalhesId.value = null;
+  abrirEdicao(produtoId);
 }
 </script>
 
@@ -92,6 +105,13 @@ async function verDetalhes(produtoId) {
       />
       <VisaoCatalogo v-else @acompanhar="acompanhar" />
     </main>
+
+    <ModalDetalhes
+      v-if="produtoEmDetalhe"
+      :produto="produtoEmDetalhe"
+      @fechar="detalhesId = null"
+      @editar="editarDoDetalhe"
+    />
 
     <ModalProduto
       v-if="modal.aberto"

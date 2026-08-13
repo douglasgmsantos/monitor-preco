@@ -138,8 +138,8 @@ def cenario():
         .collection("produtos").document("p1")
     )
     produto_ref.set({
-        "nome": "Produto", "precoAlvoCentavos": 1000, "toleranciaPct": 0,
-        "precoGatilhoCentavos": 1000, "estado": "ACIMA", "ultimoAlertaEm": None,
+        "nome": "Produto", "valorMinCentavos": 1000, "valorMaxCentavos": 1100,
+        "estado": "ACIMA", "ultimoAlertaEm": None,
         "ultimoPrecoAlertadoCentavos": None, "ativo": True,
     })
     fonte_ref = produto_ref.collection("fontes").document("f1")

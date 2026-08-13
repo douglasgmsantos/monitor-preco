@@ -95,9 +95,10 @@ class Produto:
     id: str
     ref: Any
     nome: str
-    preco_alvo_centavos: int
-    tolerancia_pct: int
-    preco_gatilho_centavos: int
+    # O MÁXIMO é o gatilho do alerta, direto. O mínimo é referência do usuário
+    # e não participa da decisão — ver `coletor/alertas.py`.
+    valor_min_centavos: int
+    valor_max_centavos: int
     estado: str
     ultimo_alerta_em: datetime | None
     ultimo_preco_alertado_centavos: int | None
@@ -394,24 +395,13 @@ class Repositorio:
             id=snapshot.id,
             ref=snapshot.reference,
             nome=dados.get("nome", ""),
-            preco_alvo_centavos=dados.get("precoAlvoCentavos", 0),
-            tolerancia_pct=dados.get("toleranciaPct", 0),
-            preco_gatilho_centavos=dados.get("precoGatilhoCentavos", 0),
+            valor_min_centavos=dados.get("valorMinCentavos", 0),
+            valor_max_centavos=dados.get("valorMaxCentavos", 0),
             estado=dados.get("estado", "ACIMA"),
             ultimo_alerta_em=dados.get("ultimoAlertaEm"),
             ultimo_preco_alertado_centavos=dados.get("ultimoPrecoAlertadoCentavos"),
             ativo=bool(dados.get("ativo", False)),
         )
-
-    def corrigir_gatilho(self, produto: Produto, gatilho_centavos: int) -> None:
-        """O coletor é a autoridade sobre `precoGatilhoCentavos`.
-
-        As rules aceitam qualquer inteiro >= alvo vindo do cliente; o valor
-        correto é reescrito aqui todo ciclo.
-        """
-        if produto.preco_gatilho_centavos != gatilho_centavos:
-            produto.ref.update({"precoGatilhoCentavos": gatilho_centavos})
-            produto.preco_gatilho_centavos = gatilho_centavos
 
     def atualizar_estado_alerta(
         self,

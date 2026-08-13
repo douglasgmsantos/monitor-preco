@@ -14,6 +14,7 @@ import {
   lojaSugeridaPelaUrl,
 } from "../lojas.js";
 import { useProdutos } from "../composables/useProdutos.js";
+import { useCatalogo } from "../composables/useCatalogo.js";
 
 const props = defineProps({
   produtoId: { type: String, default: null },   // null = criação
@@ -22,13 +23,16 @@ const props = defineProps({
 const emit = defineEmits(["fechar", "salvo"]);
 
 const { produtos, criarProduto, salvarEdicao } = useProdutos();
+const { catalogo } = useCatalogo();
 
 const edicao = computed(() =>
   props.produtoId ? produtos.value.find((p) => p.id === props.produtoId) : null);
 
 const nome = ref("");
-const alvo = ref("");
-const tolerancia = ref("0");
+// A FAIXA que o usuário aceita pagar. O MÁXIMO é o gatilho do alerta; o mínimo
+// é referência dele ("meu preço ideal") e não dispara nada — ver coletor/alertas.py.
+const valorMin = ref("");
+const valorMax = ref("");
 const fontes = reactive([]);
 const erro = ref("");
 const salvando = ref(false);
@@ -54,8 +58,9 @@ onMounted(() => {
   if (edicao.value) {
     nome.value = edicao.value.dados.nome || "";
     // reais na entrada, centavos no armazenamento
-    alvo.value = formatarBRL(edicao.value.dados.precoAlvoCentavos).replace("R$", "").trim();
-    tolerancia.value = String(edicao.value.dados.toleranciaPct ?? 0);
+    // reais na entrada, centavos no armazenamento
+    valorMin.value = formatarBRL(edicao.value.dados.valorMinCentavos).replace("R$", "").trim();
+    valorMax.value = formatarBRL(edicao.value.dados.valorMaxCentavos).replace("R$", "").trim();
     for (const fonte of edicao.value.fontes) {
       fontes.push(novaLinha({ loja: fonte.loja, url: fonte.url, fonteId: fonte.id }));
     }
@@ -76,6 +81,61 @@ function lojaDaLinha(linha) {
   return linha.escolha;
 }
 
+// ---------------------------------------------------------------------------
+// Sugestões do catálogo enquanto se digita o nome
+//
+// O catálogo já sabe nome, URL, loja e preço de milhares de itens. Sem isto o
+// usuário digita o nome à mão e depois vai caçar a URL no site da loja — duas
+// tarefas que o sistema já tem como fazer por ele.
+// ---------------------------------------------------------------------------
+
+const MINIMO_PARA_SUGERIR = 3;
+const MAXIMO_DE_SUGESTOES = 6;
+
+const sugestoesVisiveis = ref(true);
+
+/** Casa por PALAVRAS, não por substring: quem digita "9070 asrock" espera achar
+ *  "ASRock ... RX 9070 XT", que um `includes` da frase inteira não acha. */
+const sugestoes = computed(() => {
+  if (props.produtoId) return [];               // editando: não faz sentido trocar
+  const termo = nome.value.trim().toLowerCase();
+  if (termo.length < MINIMO_PARA_SUGERIR || !sugestoesVisiveis.value) return [];
+
+  const palavras = termo.split(/\s+/).filter(Boolean);
+  const jaUsadas = new Set(fontes.map((f) => f.url.trim()).filter(Boolean));
+
+  return catalogo.value
+    .filter((item) => {
+      if (!item.nome || jaUsadas.has(item.url)) return false;
+      const alvo = item.nome.toLowerCase();
+      return palavras.every((palavra) => alvo.includes(palavra));
+    })
+    // Mais barato primeiro: entre dois itens equivalentes, é a escolha óbvia.
+    .sort((a, b) => (a.preco ?? Infinity) - (b.preco ?? Infinity))
+    .slice(0, MAXIMO_DE_SUGESTOES);
+});
+
+/** Usa a sugestão: nome, URL e loja de uma vez. O valor máximo fica em branco
+ *  de propósito — é a única informação que o catálogo não tem, e é justamente a
+ *  decisão que só o usuário pode tomar. */
+function usarSugestao(item) {
+  nome.value = item.nome;
+  const loja = lojaSugeridaPelaUrl(item.url);
+  const vazia = fontes.find((f) => !f.url.trim());
+  if (vazia) {
+    vazia.url = item.url;
+    vazia.escolha = loja;
+  } else {
+    fontes.push(novaLinha({ loja, url: item.url }));
+  }
+  if (item.preco && !valorMax.value) {
+    // Preço da vitrine é o de TABELA e costuma ficar acima do real — serve de
+    // ponto de partida para o teto, nunca de valor final.
+    valorMax.value = formatarBRL(item.preco).replace("R$", "").trim();
+  }
+  sugestoesVisiveis.value = false;
+}
+
 /** Lê e valida o formulário. Devolve os dados, ou null se algo está errado. */
 function lerFormulario() {
   erro.value = "";
@@ -85,14 +145,20 @@ function lerFormulario() {
     return null;
   }
 
-  const alvoCentavos = paraCentavos(alvo.value);
-  if (alvoCentavos === null) {
-    erro.value = "Preço-alvo inválido. Use o formato 1.789,90 ou 1789.90.";
+  const minCentavos = paraCentavos(valorMin.value);
+  if (minCentavos === null) {
+    erro.value = "Valor mínimo inválido. Use o formato 1.789,90 ou 1789.90.";
     return null;
   }
-  const tol = parseInt(tolerancia.value, 10);
-  if (!Number.isInteger(tol) || tol < 0 || tol > 100) {
-    erro.value = "Tolerância precisa ser um inteiro entre 0 e 100.";
+  const maxCentavos = paraCentavos(valorMax.value);
+  if (maxCentavos === null) {
+    erro.value = "Valor máximo inválido. Use o formato 1.789,90 ou 1789.90.";
+    return null;
+  }
+  // Mesma checagem das security rules. Aqui é só para a mensagem ser útil: uma
+  // faixa invertida seria recusada pelo servidor com um erro genérico.
+  if (maxCentavos < minCentavos) {
+    erro.value = "O valor máximo precisa ser maior ou igual ao mínimo.";
     return null;
   }
 
@@ -128,7 +194,7 @@ function lerFormulario() {
     erro.value = "Cadastre ao menos uma loja com URL.";
     return null;
   }
-  return { nome: nomeLimpo, alvoCentavos, tolerancia: tol, fontes: lidas };
+  return { nome: nomeLimpo, minCentavos, maxCentavos, fontes: lidas };
 }
 
 async function salvar() {
@@ -163,20 +229,45 @@ async function salvar() {
       </p>
 
       <label class="rotulo-campo" for="m-nome">Nome do produto</label>
-      <input id="m-nome" v-model="nome" class="campo" placeholder="Ex.: Placa de vídeo RX 7600">
+      <div class="campo-com-sugestao">
+        <input id="m-nome" v-model="nome" class="campo"
+               placeholder="Ex.: Placa de vídeo RX 7600"
+               autocomplete="off"
+               @input="sugestoesVisiveis = true">
+        <ul v-if="sugestoes.length" class="sugestoes" role="listbox">
+          <li v-for="item in sugestoes" :key="item.sku">
+            <button type="button" role="option" @click="usarSugestao(item)">
+              <img v-if="item.imagem" :src="item.imagem" alt="" loading="lazy">
+              <span v-else class="sem-img" aria-hidden="true">🖥</span>
+              <span class="texto">
+                <span class="nome-sugestao">{{ item.nome }}</span>
+                <span class="dica">{{ item.loja }} · {{ formatarBRL(item.preco) }}</span>
+              </span>
+            </button>
+          </li>
+        </ul>
+      </div>
+      <p v-if="!produtoId" class="dica-busca">
+        Digite 3 letras e escolha do catálogo: nome, URL e loja vêm preenchidos.
+      </p>
 
       <div class="dupla">
         <div>
-          <label class="rotulo-campo" for="m-alvo">Preço-alvo</label>
-          <input id="m-alvo" v-model="alvo" class="campo mono" inputmode="decimal"
-                 :placeholder="(prefill && prefill.alvoPlaceholder) || '1.789,90'">
+          <label class="rotulo-campo" for="m-min">Valor mínimo</label>
+          <input id="m-min" v-model="valorMin" class="campo mono" inputmode="decimal"
+                 placeholder="1.500,00">
         </div>
         <div>
-          <label class="rotulo-campo" for="m-tol">Tolerância %</label>
-          <input id="m-tol" v-model="tolerancia" class="campo mono" type="number"
-                 min="0" max="100" step="1">
+          <label class="rotulo-campo" for="m-max">Valor máximo</label>
+          <input id="m-max" v-model="valorMax" class="campo mono" inputmode="decimal"
+                 :placeholder="(prefill && prefill.alvoPlaceholder) || '1.789,90'">
         </div>
       </div>
+      <p class="dica-faixa">
+        O <strong>máximo</strong> é o que dispara o alerta — você é avisado assim
+        que o preço ficar igual ou abaixo dele. O mínimo é a sua referência de
+        preço ideal e não dispara nada.
+      </p>
 
       <label class="rotulo-campo">Fontes (loja + URL)</label>
       <div v-for="(linha, indice) in fontes" :key="indice" class="par-fonte">
@@ -243,6 +334,39 @@ async function salvar() {
 .celula-loja { display: grid; gap: 6px; min-width: 0; }
 .url { font-size: 13px; }
 .mais-fonte { justify-self: start; font-size: 13px; }
+.campo-com-sugestao { position: relative; }
+.campo-com-sugestao .campo { width: 100%; }
+.sugestoes {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 40;
+  margin: 0; padding: 6px; list-style: none;
+  background: var(--superficie);
+  border: 1px solid var(--borda); border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.2);
+  max-height: 300px; overflow-y: auto;
+  display: grid; gap: 2px;
+}
+.sugestoes button {
+  width: 100%; border: none; background: none; border-radius: 9px;
+  padding: 8px; display: flex; gap: 10px; align-items: center; text-align: left;
+}
+.sugestoes button:hover { background: var(--suave); }
+.sugestoes img, .sugestoes .sem-img {
+  width: 38px; height: 38px; flex: none; border-radius: 8px;
+  background: var(--suave); object-fit: contain;
+  display: grid; place-items: center; font-size: 16px;
+}
+.sugestoes .texto { display: grid; gap: 2px; min-width: 0; }
+.nome-sugestao {
+  font-size: 13px; line-height: 1.3;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.dica-busca { margin: -4px 0 0; font-size: 12px; color: var(--tinta-2); }
+
+.dica-faixa {
+  margin: -4px 0 0; font-size: 12px; line-height: 1.45;
+  color: var(--tinta-2);
+}
 .dica-lojas {
   margin: -4px 0 0; font-size: 12px; line-height: 1.45;
   color: var(--tinta-2);

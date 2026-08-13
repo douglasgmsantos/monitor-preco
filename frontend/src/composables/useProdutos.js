@@ -71,15 +71,17 @@ function parar() {
 // ---------------------------------------------------------------------------
 
 /** Campos do produto que o cliente pode escrever. As rules exigem exatamente
- *  estes; `precoGatilhoCentavos` vai como o mínimo válido e o coletor corrige. */
-function camposDoProduto({ nome, alvoCentavos, tolerancia }) {
+ *  estes — nem mais, nem menos.
+ *
+ *  `valorMaxCentavos` É o gatilho do alerta, sem intermediário: não existe mais
+ *  campo derivado para o coletor recalcular a cada ciclo. `valorMinCentavos` é
+ *  referência do usuário e não participa da decisão — quem decide é o máximo.
+ *  Ver `coletor/alertas.py`. */
+function camposDoProduto({ nome, minCentavos, maxCentavos }) {
   return {
     nome,
-    precoAlvoCentavos: alvoCentavos,
-    toleranciaPct: tolerancia,
-    // O gatilho autoritativo é calculado pelo coletor (calcular_gatilho, em
-    // alertas.py). Duplicar a fórmula aqui violaria o anti-padrão da seção 14.
-    precoGatilhoCentavos: alvoCentavos,
+    valorMinCentavos: minCentavos,
+    valorMaxCentavos: maxCentavos,
   };
 }
 
@@ -178,8 +180,8 @@ async function excluirProduto(produtoId) {
 }
 
 async function alternarAtivo(produtoId, ativoAgora) {
-  // As rules permitem alterar só ['nome', 'precoAlvoCentavos', 'toleranciaPct',
-  // 'precoGatilhoCentavos', 'ativo'] — 'ativo' está na lista.
+  // As rules permitem alterar só ['nome', 'valorMinCentavos',
+  // 'valorMaxCentavos', 'ativo'] — 'ativo' está na lista.
   await updateDoc(doc(db, `usuarios/${uid}/produtos/${produtoId}`), {
     ativo: !ativoAgora,
   });

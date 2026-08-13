@@ -9,7 +9,6 @@ from coletor.alertas import (
     ESTADO_ACIMA,
     ESTADO_EM_ALERTA,
     avaliar,
-    calcular_gatilho,
     formatar_reais,
     limite_pela_media,
     montar_mensagem,
@@ -19,18 +18,18 @@ from coletor.notificador import NotificadorMemoria
 
 AGORA = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
 
-ALVO = 100_000  # R$ 1.000,00
-TOLERANCIA = 10  # 10%
-GATILHO = calcular_gatilho(ALVO, TOLERANCIA)  # R$ 1.100,00
+# O gatilho É o valor máximo, sem fórmula no meio. `MINIMO` existe só para
+# provar que ele NÃO influencia a decisão de alerta.
+MINIMO = 100_000   # R$ 1.000,00 — referência do usuário
+GATILHO = 110_000  # R$ 1.100,00 — valor máximo, o gatilho de verdade
 
 
 @dataclass
 class ProdutoFalso:
     id: str = "p1"
     nome: str = "Placa de vídeo"
-    preco_alvo_centavos: int = ALVO
-    tolerancia_pct: int = TOLERANCIA
-    preco_gatilho_centavos: int = GATILHO
+    valor_min_centavos: int = MINIMO
+    valor_max_centavos: int = GATILHO
     estado: str = ESTADO_ACIMA
     ultimo_alerta_em: datetime | None = None
     ultimo_preco_alertado_centavos: int | None = None
@@ -62,20 +61,33 @@ class RepositorioFalso:
         return self.media_hist
 
 
-# --- A fórmula do gatilho ----------------------------------------------------
+# --- O gatilho é o valor máximo ----------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "alvo, tolerancia, esperado",
-    [
-        (100_000, 0, 100_000),
-        (100_000, 10, 110_000),
-        (129_990, 5, 136_489),  # 129990 * 105 // 100, divisão inteira trunca
-        (100_000, 100, 200_000),
-    ],
-)
-def test_calcular_gatilho(alvo, tolerancia, esperado):
-    assert calcular_gatilho(alvo, tolerancia) == esperado
+@pytest.mark.parametrize("minimo", [1, MINIMO, GATILHO])
+def test_o_minimo_nao_muda_a_decisao(minimo):
+    """O mínimo é referência do usuário, não piso do alerta.
+
+    Se ele participasse, um preço ABAIXO dele não notificaria — a melhor oferta
+    possível passaria batida, que é o oposto do que um monitor de preço serve.
+    """
+    produto = ProdutoFalso(estado=ESTADO_ACIMA, valor_min_centavos=minimo)
+    decisao = avaliar(produto, [LeituraFalsa(preco_centavos=GATILHO)], AGORA)
+    assert decisao.notificar
+
+
+def test_preco_muito_abaixo_do_minimo_ainda_notifica():
+    """Metade do mínimo é uma pechincha, não motivo para silêncio."""
+    produto = ProdutoFalso(estado=ESTADO_ACIMA)
+    decisao = avaliar(produto, [LeituraFalsa(preco_centavos=MINIMO // 2)], AGORA)
+    assert decisao.notificar
+
+
+def test_um_centavo_acima_do_maximo_nao_notifica():
+    produto = ProdutoFalso(estado=ESTADO_ACIMA)
+    decisao = avaliar(produto, [LeituraFalsa(preco_centavos=GATILHO + 1)], AGORA)
+    assert not decisao.notificar
+    assert decisao.motivo == "acima_do_gatilho"
 
 
 # --- Tabela de estados -------------------------------------------------------
@@ -399,7 +411,7 @@ def test_mensagem_da_media_nao_mente_sobre_o_alvo():
     assert "alvo:" not in mensagem
 
 
-def test_mensagem_do_alvo_continua_igual():
+def test_mensagem_do_maximo():
     produto = ProdutoFalso()
     repositorio = RepositorioFalso(media=None, media_hist=200_000)
     notificador = NotificadorMemoria()
@@ -410,7 +422,7 @@ def test_mensagem_do_alvo_continua_igual():
 
     (mensagem,) = notificador.mensagens
     assert "🔻 Preço atingido" in mensagem
-    assert "(alvo: R$ 1.000,00)" in mensagem
+    assert "(máx: R$ 1.100,00)" in mensagem
 
 
 # --- Formatação --------------------------------------------------------------
@@ -438,7 +450,7 @@ def test_mensagem_sem_historico_omite_a_media():
     assert "média de 30 dias" not in mensagem
     assert "Loja: KaBuM" in mensagem
     assert "R$ 1.050,00" in mensagem
-    assert "(alvo: R$ 1.000,00)" in mensagem
+    assert "(máx: R$ 1.100,00)" in mensagem
     assert leitura.url in mensagem
 
 

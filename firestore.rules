@@ -7,20 +7,25 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == uid;
     }
 
+    // Faixa de preço do produto. `valorMaxCentavos` É o gatilho do alerta — não
+    // existe mais campo derivado (`precoGatilhoCentavos`) para o coletor
+    // recalcular e corrigir a cada ciclo. O que o cliente grava é o que vale, e
+    // por isso a validação aqui é a única linha de defesa.
+    //
+    // `valorMinCentavos` não participa da decisão de alerta; é referência do
+    // usuário. Mas precisa ser <= máximo, senão a tela mostra uma faixa
+    // invertida e ninguém entende o que o sistema está fazendo.
     function produtoValido() {
       let d = request.resource.data;
       return d.nome is string && d.nome.size() > 0 && d.nome.size() <= 200
-          && d.precoAlvoCentavos is int && d.precoAlvoCentavos > 0
-          && d.toleranciaPct is int
-          && d.toleranciaPct >= 0 && d.toleranciaPct <= 100
-          && d.precoGatilhoCentavos is int
-          && d.precoGatilhoCentavos >= d.precoAlvoCentavos
+          && d.valorMinCentavos is int && d.valorMinCentavos > 0
+          && d.valorMaxCentavos is int && d.valorMaxCentavos > 0
+          && d.valorMaxCentavos >= d.valorMinCentavos
           && d.ativo is bool;
     }
 
     function camposDoCliente() {
-      return ['nome', 'precoAlvoCentavos', 'toleranciaPct',
-              'precoGatilhoCentavos', 'ativo'];
+      return ['nome', 'valorMinCentavos', 'valorMaxCentavos', 'ativo'];
     }
 
     // Única escrita em fonte permitida ao cliente: devolvê-la à fila de
