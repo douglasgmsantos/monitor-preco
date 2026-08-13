@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 
+from coletor.lojas import condicao_de_pagamento_de
+
 logger = logging.getLogger(__name__)
 
 ESTADO_ACIMA = "ACIMA"
@@ -31,6 +33,9 @@ MARGEM_MEDIA_PCT_PADRAO = 10
 
 GATILHO_ALVO = "alvo"
 GATILHO_MEDIA = "media"
+
+# Convite no rodapé de toda mensagem. Trocar de bot é trocar esta linha.
+LINK_DO_GRUPO = "https://t.me/douglas_preco_bot"
 
 # O GATILHO É O VALOR MÁXIMO, direto. Não existe fórmula.
 #
@@ -209,45 +214,31 @@ def _variacao_vs_media(preco_centavos: int, media_centavos: int | None) -> str |
     return f"{variacao:+d}%"
 
 
-def montar_mensagem(
-    produto: Produto,
-    leitura: Leitura,
-    media_30_dias_centavos: int | None = None,
-    *,
-    decisao: "Decisao | None" = None,
-) -> str:
-    """Mensagem do alerta. Sem 30 dias de histórico, o trecho da média some.
+def montar_mensagem(produto: Produto, leitura: Leitura) -> str:
+    """A mensagem do alerta, no formato de canal de ofertas.
 
-    O título e a segunda linha mudam conforme o gatilho: dizer "preço atingido"
-    quando o alvo não foi atingido — e só a média justificou o alerta — seria
-    mentir para o usuário.
+    Cinco blocos: produto, preço, link, e o convite. Sem título de "por que
+    disparou" — o formato não afirma motivo, e é isso que o torna seguro: a
+    versão anterior escrevia "(alvo: R$ X)" e precisava de uma variante para não
+    mentir quando quem disparou foi a média.
+
+    A CONDIÇÃO DE PAGAMENTO só aparece quando a loja de fato pratica aquele
+    preço à vista. Ver `condicao_de_pagamento` em `coletor/lojas.py`: a Amazon
+    fica sem, porque o preço que se lê dela é o normal.
     """
-    preco = leitura.preco_centavos
-    linha_loja = f"Loja: {leitura.loja}"
-    variacao = _variacao_vs_media(preco, media_30_dias_centavos)
-    if variacao is not None:
-        linha_loja += f"  ·  {variacao} vs. média de 30 dias"
-
-    pela_media = (
-        decisao is not None
-        and decisao.gatilho_usado == GATILHO_MEDIA
-        and preco > produto.valor_max_centavos
-    )
-    if pela_media:
-        titulo = "📉 Abaixo da média histórica"
-        referencia = f"(média: R$ {formatar_reais(decisao.media_historica_centavos)})"
-    else:
-        titulo = "🔻 Preço atingido"
-        referencia = f"(máx: R$ {formatar_reais(produto.valor_max_centavos)})"
+    preco = f"R$ {formatar_reais(leitura.preco_centavos)}"
+    condicao = condicao_de_pagamento_de(leitura.url)
+    linha_preco = f"✅ {preco} {condicao}".rstrip()
 
     return (
-        f"{titulo}\n"
+        f"🔥🙏🏻 {produto.nome}\n"
         "\n"
-        f"{produto.nome}\n"
-        f"R$ {formatar_reais(preco)}  {referencia}\n"
-        f"{linha_loja}\n"
+        f"{linha_preco}\n"
         "\n"
-        f"{leitura.url}"
+        f"Link -> : {leitura.url}\n"
+        "\n"
+        "Grupos Exclusivos 👍\n"
+        f"{LINK_DO_GRUPO}"
     )
 
 
@@ -264,8 +255,6 @@ class RepositorioDeAlertas(Protocol):
         preco_centavos: int | None,
         alertado_em: datetime | None,
     ) -> None: ...
-
-    def media_30_dias_centavos(self, produto: Produto) -> int | None: ...
 
     def media_historica_centavos(self, produto: Produto) -> int | None: ...
 
@@ -292,10 +281,10 @@ def processar(
     )
 
     if decisao.notificar:
-        media = repositorio.media_30_dias_centavos(produto)
-        notificador.enviar(
-            montar_mensagem(produto, decisao.leitura, media, decisao=decisao)
-        )
+        # A mensagem não mostra mais a média, então o `media_30_dias_centavos`
+        # que rodava aqui sumiu junto — era uma varredura do rollup diário por
+        # notificação enviada, para um número que ninguém lê.
+        notificador.enviar(montar_mensagem(produto, decisao.leitura))
         repositorio.atualizar_estado_alerta(
             produto, decisao.novo_estado, decisao.preco_centavos, agora
         )

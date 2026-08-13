@@ -179,6 +179,11 @@ class Loja:
     # presente, VENCE o preço da estratégia — e a ausência dele na página é erro,
     # não motivo para cair no número errado. Ver o bloco acima.
     padrao_preco_avista: str | None = None
+    # Como o preço lido é pago. Vai para a mensagem do Telegram, então precisa
+    # ser VERDADE para esta loja — dizer "à vista no PIX" num preço que não tem
+    # o desconto faria o alerta prometer um valor que a loja não pratica.
+    # Vazio = não se afirma nada.
+    condicao_de_pagamento: str = ""
     # Anotação honesta do que se sabe sobre buscar esta loja de fora. Aparece no
     # log quando a coleta falha, para o motivo não virar adivinhação.
     observacao: str = ""
@@ -197,6 +202,7 @@ LOJAS: tuple[Loja, ...] = (
         estrategia="jsonld",
         # Fica em "direta" de propósito: é a única que responde ao runner, e
         # fazê-la depender do n8n seria trocar o que funciona pelo que talvez.
+        condicao_de_pagamento="à vista no PIX",
         observacao="em produção desde o início; único caso confirmado no runner",
     ),
     Loja(
@@ -204,6 +210,7 @@ LOJAS: tuple[Loja, ...] = (
         dominios=("terabyteshop.com.br",),
         estrategia="jsonld",
         busca="capturada",
+        condicao_de_pagamento="à vista no PIX",
         observacao=(
             "JSON-LD verificado. O runner toma http_403; pelo n8n, de rede "
             "residencial, leu R$ 3.399,99 e R$ 1.349,99 em 2026-08-13"
@@ -216,6 +223,7 @@ LOJAS: tuple[Loja, ...] = (
         busca="capturada",
         # O JSON-LD dela dá o parcelado; o preço que interessa vem do estado.
         padrao_preco_avista=PADRAO_AVISTA_PICHAU,
+        condicao_de_pagamento="à vista no PIX",
         observacao=(
             "PROBLEMÁTICA. Única loja cujo JSON-LD não é o preço à vista (traz o "
             "final_price; o à vista mora no estado embutido). E bloqueia de "
@@ -232,6 +240,11 @@ LOJAS: tuple[Loja, ...] = (
         busca="capturada",
         seletores=SELETORES_AMAZON,
         cabecalhos=CABECALHOS_DE_NAVEGADOR,
+        # SEM condição de propósito: o preço que se lê da Amazon é o normal. Ela
+        # anuncia "5% off à vista no Pix", mas só como badge — o valor com
+        # desconto não existe na página. Afirmar "à vista" seria prometer um
+        # preço 5% menor do que o que vai ser lido.
+        condicao_de_pagamento="",
         observacao=(
             "sem JSON-LD; DOM verificado no template, ao vivo e por captura "
             "(R$ 3.798,83 em 2026-08-13). EXIGE cabeçalhos de navegador — com UA "
@@ -240,6 +253,16 @@ LOJAS: tuple[Loja, ...] = (
         ),
     ),
 )
+
+
+def condicao_de_pagamento_de(url: str) -> str:
+    """Como o preço desta loja é pago, para a mensagem do alerta.
+
+    Vazio quando não se pode afirmar nada — que é o caso da Amazon, e é o
+    padrão para qualquer loja fora do registro.
+    """
+    loja = loja_de(url)
+    return loja.condicao_de_pagamento if loja is not None else ""
 
 
 def busca_de(url: str) -> str:

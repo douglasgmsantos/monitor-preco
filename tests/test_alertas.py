@@ -54,9 +54,6 @@ class RepositorioFalso:
     def atualizar_estado_alerta(self, produto, estado, preco_centavos, alertado_em):
         self.estados.append((produto.id, estado, preco_centavos, alertado_em))
 
-    def media_30_dias_centavos(self, produto):
-        return self.media
-
     def media_historica_centavos(self, produto):
         return self.media_hist
 
@@ -396,70 +393,80 @@ def test_rearma_considerando_o_gatilho_da_media():
     assert decisao.motivo == "rearmou"
 
 
-def test_mensagem_da_media_nao_mente_sobre_o_alvo():
+def test_alerta_pela_media_usa_o_mesmo_formato():
+    """O gatilho da média continua existindo e disparando.
+
+    O que mudou é que a mensagem não declara mais a referência, então não há
+    variante para escrever: preço acima do máximo (R$ 1.100,00) notifica na
+    mesma, porque ficou bem abaixo da média histórica.
+    """
     produto = ProdutoFalso()
-    repositorio = RepositorioFalso(media=None, media_hist=200_000)
+    repositorio = RepositorioFalso(media_hist=200_000)
     notificador = NotificadorMemoria()
 
-    processar(produto, [LeituraFalsa(preco_centavos=170_000)], AGORA,
-              repositorio, notificador)
+    decisao = processar(produto, [LeituraFalsa(preco_centavos=170_000)], AGORA,
+                        repositorio, notificador)
 
+    assert decisao.motivo == "abaixo_da_media"
     (mensagem,) = notificador.mensagens
-    assert "Abaixo da média histórica" in mensagem
-    assert "Preço atingido" not in mensagem
-    assert "(média: R$ 2.000,00)" in mensagem
-    assert "alvo:" not in mensagem
+    assert mensagem.startswith("🔥🙏🏻")
+    assert "R$ 1.700,00" in mensagem
+    # Nenhuma referência declarada = nada que possa estar errado.
+    assert "alvo" not in mensagem and "média" not in mensagem
 
 
-def test_mensagem_do_maximo():
+def test_mensagem_segue_o_formato_do_canal():
+    """Cinco blocos, na ordem: produto, preço, link, convite."""
+    produto = ProdutoFalso(nome="Placa de vídeo RX 9070")
+    leitura = LeituraFalsa(preco_centavos=105_000, loja="KaBuM",
+                           url="https://www.kabum.com.br/produto/1")
+    mensagem = montar_mensagem(produto, leitura)
+
+    assert mensagem.startswith("🔥🙏🏻 Placa de vídeo RX 9070")
+    assert "✅ R$ 1.050,00" in mensagem
+    assert "Link -> : https://www.kabum.com.br/produto/1" in mensagem
+    assert mensagem.endswith("Grupos Exclusivos 👍\nhttps://t.me/douglas_preco_bot")
+
+
+def test_mensagem_traz_a_condicao_de_pagamento_da_loja():
+    """KaBuM, Terabyte e Pichau publicam o preço à vista no PIX — dizer isso é
+    informação, e o usuário confere no site."""
     produto = ProdutoFalso()
-    repositorio = RepositorioFalso(media=None, media_hist=200_000)
-    notificador = NotificadorMemoria()
-
-    # 105.000 atinge o alvo (110.000) E está abaixo do limite da média
-    processar(produto, [LeituraFalsa(preco_centavos=105_000)], AGORA,
-              repositorio, notificador)
-
-    (mensagem,) = notificador.mensagens
-    assert "🔻 Preço atingido" in mensagem
-    assert "(máx: R$ 1.100,00)" in mensagem
+    leitura = LeituraFalsa(preco_centavos=105_000, loja="KaBuM",
+                           url="https://www.kabum.com.br/produto/1")
+    assert "✅ R$ 1.050,00 à vista no PIX" in montar_mensagem(produto, leitura)
 
 
-# --- Formatação --------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "centavos, esperado",
-    [
-        (129990, "1.299,90"),
-        (999000, "9.990,00"),
-        (5, "0,05"),
-        (100, "1,00"),
-        (123456789, "1.234.567,89"),
-    ],
-)
-def test_formatar_reais(centavos, esperado):
-    assert formatar_reais(centavos) == esperado
-
-
-def test_mensagem_sem_historico_omite_a_media():
+def test_mensagem_da_amazon_nao_promete_desconto_a_vista():
+    """O preço que se lê da Amazon é o NORMAL. Ela mostra "5% off à vista no
+    Pix" como badge, sem publicar o valor com desconto — anunciar "à vista"
+    prometeria um preço 5% menor do que o que está no link."""
     produto = ProdutoFalso()
-    leitura = LeituraFalsa(preco_centavos=105_000, loja="KaBuM")
-    mensagem = montar_mensagem(produto, leitura, media_30_dias_centavos=None)
-
-    assert "média de 30 dias" not in mensagem
-    assert "Loja: KaBuM" in mensagem
-    assert "R$ 1.050,00" in mensagem
-    assert "(máx: R$ 1.100,00)" in mensagem
-    assert leitura.url in mensagem
+    leitura = LeituraFalsa(preco_centavos=105_000, loja="Amazon",
+                           url="https://www.amazon.com.br/dp/B1")
+    mensagem = montar_mensagem(produto, leitura)
+    assert "✅ R$ 1.050,00\n" in mensagem
+    assert "à vista" not in mensagem
 
 
-def test_mensagem_com_historico_mostra_a_variacao():
+def test_mensagem_de_loja_desconhecida_nao_afirma_condicao():
     produto = ProdutoFalso()
-    leitura = LeituraFalsa(preco_centavos=105_000)
-    mensagem = montar_mensagem(produto, leitura, media_30_dias_centavos=120_000)
+    leitura = LeituraFalsa(preco_centavos=105_000, loja="Outra",
+                           url="https://loja.example/p/1")
+    assert "à vista" not in montar_mensagem(produto, leitura)
 
-    assert "-12% vs. média de 30 dias" in mensagem
+
+def test_mensagem_nao_muda_com_o_gatilho():
+    """O formato não afirma POR QUE disparou, e é isso que o torna seguro.
+
+    A versão anterior escrevia "(alvo: R$ X)" e precisava de uma variante para
+    não mentir quando quem disparou foi a média. Sem referência declarada, não
+    há o que desmentir.
+    """
+    produto = ProdutoFalso()
+    leitura = LeituraFalsa(preco_centavos=105_000, loja="KaBuM",
+                           url="https://www.kabum.com.br/p/1")
+    assert montar_mensagem(produto, leitura) == montar_mensagem(produto, leitura)
 
 
 def test_notificador_memoria_nao_toca_a_rede():
