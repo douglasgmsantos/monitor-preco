@@ -37,6 +37,9 @@ class Config:
     # Não afeta a raspagem de catálogo, que tem cadência própria de 24h e é a
     # parte cara (dezenas de páginas de listagem nas lojas). Ver `executar_ciclo`.
     forcar_coleta: bool = False
+    # Avisa a cada ciclo enquanto o preço estiver na faixa, sem regra dos 5% e
+    # sem cooldown. Ver `REPETIR_NO_RANGE_PADRAO` em coletor/alertas.py.
+    alerta_repete_no_range: bool = True
 
 
 def carregar() -> Config:
@@ -67,6 +70,11 @@ def carregar() -> Config:
             if url.strip()
         ),
         forcar_coleta=_booleano(os.environ.get("FORCAR_COLETA")),
+        # Ausente = ligado. O padrão segue a escolha de quem opera; desligar é
+        # explícito, para ninguém perder alerta por esquecer de configurar.
+        alerta_repete_no_range=_booleano(
+            os.environ.get("ALERTA_REPETE_NO_RANGE", "true")
+        ),
     )
 
 

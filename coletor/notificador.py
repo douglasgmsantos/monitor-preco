@@ -21,7 +21,14 @@ LIMITE_DA_LEGENDA = 1024
 
 
 class Notificador(Protocol):
-    def enviar(self, mensagem: str, imagem: str | None = None) -> None: ...
+    # Devolve True só quando o Telegram ACEITOU a mensagem.
+    #
+    # O retorno existe porque quem chama precisa dele: `alertas.processar` marca
+    # o produto como alertado e o cala por causa da regra dos 5%. Marcar isso
+    # depois de um envio que falhou produz o pior resultado possível — o sistema
+    # acha que avisou, o usuário não recebeu nada, e o silêncio é permanente
+    # enquanto o preço não cair mais 5%.
+    def enviar(self, mensagem: str, imagem: str | None = None) -> bool: ...
 
 
 class NotificadorTelegram:
@@ -31,7 +38,7 @@ class NotificadorTelegram:
         self._token = token
         self._chat_id = chat_id
 
-    def enviar(self, mensagem: str, imagem: str | None = None) -> None:
+    def enviar(self, mensagem: str, imagem: str | None = None) -> bool:
         """Manda o alerta. Com imagem vai como FOTO; sem, como texto.
 
         POR QUE FOTO: o prévio de link do Telegram é montado pelas tags Open
@@ -43,7 +50,7 @@ class NotificadorTelegram:
         """
         if not self._token or not self._chat_id:
             logger.warning("Telegram não configurado — notificação descartada")
-            return
+            return False
 
         if imagem and len(mensagem) <= LIMITE_DA_LEGENDA:
             if self._chamar("sendPhoto", {
@@ -51,13 +58,13 @@ class NotificadorTelegram:
                 "photo": imagem,
                 "caption": mensagem,
             }):
-                return
+                return True
             # A imagem pode estar fora do ar, ser grande demais ou ter um
             # formato que o Telegram recusa. Perder o alerta por causa da foto
             # seria trocar o essencial pelo enfeite.
             logger.warning("sendPhoto falhou; reenviando como texto")
 
-        self._chamar("sendMessage", {
+        return self._chamar("sendMessage", {
             "chat_id": self._chat_id,
             "text": mensagem,
             "link_preview_options": {"is_disabled": True},
@@ -72,9 +79,16 @@ class NotificadorTelegram:
             )
             resposta.raise_for_status()
             return True
-        except httpx.HTTPError:
-            # Uma notificação perdida não pode derrubar o ciclo de coleta.
-            logger.warning("falha em %s do Telegram", metodo, exc_info=True)
+        except httpx.HTTPError as erro:
+            # Uma notificação perdida não pode derrubar o ciclo de coleta — mas
+            # também não pode passar como sucesso. O corpo da resposta traz o
+            # `description` do Telegram ("chat not found", "Unauthorized"), que
+            # é a diferença entre um log acionável e um "deu erro".
+            detalhe = ""
+            resposta = getattr(erro, "response", None)
+            if resposta is not None:
+                detalhe = f" — {resposta.status_code}: {resposta.text[:200]}"
+            logger.error("falha em %s do Telegram%s", metodo, detalhe)
             return False
 
 
@@ -101,6 +115,7 @@ class NotificadorMemoria:
         self.mensagens: list[str] = []
         self.imagens: list[str | None] = []
 
-    def enviar(self, mensagem: str, imagem: str | None = None) -> None:
+    def enviar(self, mensagem: str, imagem: str | None = None) -> bool:
         self.mensagens.append(mensagem)
         self.imagens.append(imagem)
+        return True

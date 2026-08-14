@@ -428,6 +428,44 @@ def test_transicao_silenciosa_nao_mexe_no_ultimo_alerta(repositorio, cenario):
     assert dados["ultimoPrecoAlertadoCentavos"] is None
 
 
+def test_contador_de_repeticoes_persiste_e_volta_pelo_carregar(repositorio, cenario):
+    """A pausa por repetição só funciona se o contador sobreviver ao ciclo.
+
+    Ele mora no Firestore porque cada ciclo é um processo novo: memória do
+    processo anterior não existe.
+    """
+    fonte = cenario()
+    produto = repositorio.carregar_produto(fonte.produto_ref)
+    quando = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
+
+    repositorio.atualizar_estado_alerta(produto, "EM_ALERTA", 95_000, quando, 3)
+
+    recarregado = repositorio.carregar_produto(fonte.produto_ref)
+    assert recarregado.repeticoes_no_mesmo_preco == 3
+
+
+def test_produto_sem_o_campo_de_repeticoes_comeca_do_zero(repositorio, cenario):
+    """Produto criado antes do campo existir. Zero é o começo certo: nenhuma
+    repetição gasta, então ele volta a alertar em vez de nascer pausado."""
+    fonte = cenario()
+    produto = repositorio.carregar_produto(fonte.produto_ref)
+    assert produto.repeticoes_no_mesmo_preco == 0
+
+
+def test_rearme_zera_o_contador_na_transicao_silenciosa(repositorio, cenario):
+    """O rearme não escreve mais nada além do estado — o contador vai junto,
+    senão sair da faixa e voltar não liberaria alerta nenhum."""
+    fonte = cenario()
+    produto = repositorio.carregar_produto(fonte.produto_ref)
+    quando = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
+    repositorio.atualizar_estado_alerta(produto, "EM_ALERTA", 95_000, quando, 5)
+
+    produto = repositorio.carregar_produto(fonte.produto_ref)
+    repositorio.atualizar_estado_alerta(produto, "ACIMA", None, None, 0)
+
+    assert repositorio.carregar_produto(fonte.produto_ref).repeticoes_no_mesmo_preco == 0
+
+
 def test_o_maximo_do_cliente_e_o_gatilho_sem_intermediario(repositorio, cenario):
     """Não existe mais campo derivado para o coletor corrigir.
 

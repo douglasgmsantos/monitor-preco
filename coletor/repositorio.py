@@ -112,6 +112,10 @@ class Produto:
     ultimo_alerta_em: datetime | None
     ultimo_preco_alertado_centavos: int | None
     ativo: bool
+    # Quantas mensagens já saíram com `ultimo_preco_alertado_centavos`. É o que
+    # faz o alerta PAUSAR depois de repetir demais o mesmo preço — ver
+    # `LIMITE_DE_REPETICOES` em coletor/alertas.py.
+    repeticoes_no_mesmo_preco: int = 0
 
 
 # ----------------------------------------------------------------------------
@@ -448,6 +452,9 @@ class Repositorio:
             ultimo_alerta_em=dados.get("ultimoAlertaEm"),
             ultimo_preco_alertado_centavos=dados.get("ultimoPrecoAlertadoCentavos"),
             ativo=bool(dados.get("ativo", False)),
+            # Ausente em produto anterior ao campo: 0 significa "nenhuma
+            # repetição gasta", que é o começo certo para quem nunca contou.
+            repeticoes_no_mesmo_preco=int(dados.get("repeticoesNoMesmoPreco") or 0),
         )
 
     def atualizar_estado_alerta(
@@ -456,9 +463,18 @@ class Repositorio:
         estado: str,
         preco_centavos: int | None,
         alertado_em: datetime | None,
+        repeticoes_no_mesmo_preco: int = 0,
     ) -> None:
-        """Grava estado e, quando houve notificação, os campos do alerta."""
-        atualizacao: dict[str, Any] = {"estado": estado}
+        """Grava estado e, quando houve notificação, os campos do alerta.
+
+        O contador de repetições é gravado SEMPRE, inclusive na transição
+        silenciosa: é no rearme que ele precisa voltar a zero, e o rearme não
+        escreve mais nada além do estado.
+        """
+        atualizacao: dict[str, Any] = {
+            "estado": estado,
+            "repeticoesNoMesmoPreco": repeticoes_no_mesmo_preco,
+        }
         if alertado_em is not None:
             atualizacao["ultimoAlertaEm"] = alertado_em
             atualizacao["ultimoPrecoAlertadoCentavos"] = preco_centavos

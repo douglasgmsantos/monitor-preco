@@ -8,6 +8,7 @@ import pytest
 from coletor.alertas import (
     ESTADO_ACIMA,
     ESTADO_EM_ALERTA,
+    LIMITE_DE_REPETICOES,
     avaliar,
     limite_pela_media,
     montar_mensagem,
@@ -33,6 +34,7 @@ class ProdutoFalso:
     ultimo_alerta_em: datetime | None = None
     ultimo_preco_alertado_centavos: int | None = None
     ativo: bool = True
+    repeticoes_no_mesmo_preco: int = 0
 
 
 @dataclass
@@ -51,9 +53,12 @@ class RepositorioFalso:
     media_hist: int | None = None
     estados: list = field(default_factory=list)
     notificacoes: list = field(default_factory=list)
+    repeticoes: list = field(default_factory=list)
 
-    def atualizar_estado_alerta(self, produto, estado, preco_centavos, alertado_em):
+    def atualizar_estado_alerta(self, produto, estado, preco_centavos, alertado_em,
+                                repeticoes_no_mesmo_preco=0):
         self.estados.append((produto.id, estado, preco_centavos, alertado_em))
+        self.repeticoes.append(repeticoes_no_mesmo_preco)
 
     def media_historica_centavos(self, produto):
         return self.media_hist
@@ -110,7 +115,8 @@ def test_linha2_em_alerta_com_queda_de_5pct_renotifica():
         ultimo_alerta_em=AGORA - timedelta(hours=48),
     )
     # 95.000 é exatamente 5% abaixo de 100.000
-    decisao = avaliar(produto, [LeituraFalsa(preco_centavos=95_000)], AGORA)
+    decisao = avaliar(produto, [LeituraFalsa(preco_centavos=95_000)], AGORA,
+                      repetir_no_range=False)
 
     assert decisao.notificar is True
     assert decisao.novo_estado == ESTADO_EM_ALERTA
@@ -123,7 +129,8 @@ def test_linha3_em_alerta_sem_queda_de_5pct_silencia():
         ultimo_preco_alertado_centavos=100_000,
         ultimo_alerta_em=AGORA - timedelta(hours=48),
     )
-    decisao = avaliar(produto, [LeituraFalsa(preco_centavos=96_000)], AGORA)
+    decisao = avaliar(produto, [LeituraFalsa(preco_centavos=96_000)], AGORA,
+                      repetir_no_range=False)
 
     assert decisao.notificar is False
     assert decisao.novo_estado == ESTADO_EM_ALERTA
@@ -218,7 +225,8 @@ def test_cooldown_cala_a_mensagem_mas_avanca_o_estado():
         ultimo_alerta_em=AGORA - timedelta(hours=1),
         ultimo_preco_alertado_centavos=100_000,
     )
-    decisao = avaliar(produto, [LeituraFalsa(preco_centavos=90_000)], AGORA)
+    decisao = avaliar(produto, [LeituraFalsa(preco_centavos=90_000)], AGORA,
+                      repetir_no_range=False)
 
     assert decisao.notificar is False
     assert decisao.motivo == "cooldown"
@@ -242,7 +250,8 @@ def test_cooldown_bloqueia_tambem_a_renotificacao():
         ultimo_preco_alertado_centavos=100_000,
         ultimo_alerta_em=AGORA - timedelta(hours=2),
     )
-    decisao = avaliar(produto, [LeituraFalsa(preco_centavos=50_000)], AGORA)
+    decisao = avaliar(produto, [LeituraFalsa(preco_centavos=50_000)], AGORA,
+                      repetir_no_range=False)
 
     assert decisao.notificar is False
     assert decisao.motivo == "cooldown"
@@ -271,7 +280,8 @@ def test_processar_em_cooldown_persiste_estado_sem_tocar_no_ultimo_alerta():
     repositorio = RepositorioFalso()
     notificador = NotificadorMemoria()
 
-    processar(produto, [LeituraFalsa(preco_centavos=90_000)], AGORA, repositorio, notificador)
+    processar(produto, [LeituraFalsa(preco_centavos=90_000)], AGORA, repositorio,
+              notificador, repetir_no_range=False)
 
     assert notificador.mensagens == []
     assert repositorio.estados == [("p1", ESTADO_EM_ALERTA, None, None)]
@@ -288,27 +298,120 @@ def test_processar_silencio_sem_transicao_nao_escreve():
     assert repositorio.estados == []
 
 
-def test_nao_notifica_vinte_vezes_abaixo_do_alvo():
-    """O cenário que o anti-padrão da seção 14 quer impedir."""
-    produto = ProdutoFalso(estado=ESTADO_ACIMA)
+def _rodar_ciclos(quantos, preco, repetir_no_range, produto=None):
+    """Roda N ciclos refletindo no produto o que o repositório teria gravado."""
+    produto = produto or ProdutoFalso(estado=ESTADO_ACIMA)
     repositorio = RepositorioFalso()
     notificador = NotificadorMemoria()
 
     instante = AGORA
-    for _ in range(20):
-        processar(
-            produto, [LeituraFalsa(preco_centavos=105_000)], instante, repositorio, notificador
-        )
-        # reflete o que o repositório teria gravado
-        ultimo = repositorio.estados[-1] if repositorio.estados else None
-        if ultimo:
-            produto.estado = ultimo[1]
-            if ultimo[3] is not None:
-                produto.ultimo_alerta_em = ultimo[3]
-                produto.ultimo_preco_alertado_centavos = ultimo[2]
+    for _ in range(quantos):
+        processar(produto, [LeituraFalsa(preco_centavos=preco)], instante,
+                  repositorio, notificador, repetir_no_range=repetir_no_range)
+        if repositorio.estados:
+            id_, estado, preco_gravado, alertado_em = repositorio.estados[-1]
+            produto.estado = estado
+            produto.repeticoes_no_mesmo_preco = repositorio.repeticoes[-1]
+            if alertado_em is not None:
+                produto.ultimo_alerta_em = alertado_em
+                produto.ultimo_preco_alertado_centavos = preco_gravado
         instante += timedelta(hours=1)
+    return notificador, repositorio, produto
 
+
+def test_nao_notifica_vinte_vezes_abaixo_do_alvo():
+    """O cenário que o anti-padrão da seção 14 quer impedir.
+
+    Vale com a repetição DESLIGADA — é a regra dos 5% fazendo o trabalho.
+    """
+    notificador, _, _ = _rodar_ciclos(20, 105_000, repetir_no_range=False)
     assert len(notificador.mensagens) == 1
+
+
+# --- pausa depois de N mensagens no mesmo preço ------------------------------
+#
+# Os testes usam `LIMITE_DE_REPETICOES`, nunca o número literal. O limite já foi
+# ajustado uma vez (5 -> 3); com o literal espalhado, cada ajuste viraria uma
+# caçada por asserções — e uma esquecida deixaria um teste verde afirmando um
+# comportamento que o código não tem mais.
+
+
+# Ciclos suficientes para estourar o limite com folga em qualquer valor dele.
+CICLOS_DE_SOBRA = LIMITE_DE_REPETICOES * 4
+
+
+def test_repeticao_para_depois_do_limite_de_mensagens_no_mesmo_preco():
+    """Com a repetição ligada, muitos ciclos no mesmo preço rendem só N mensagens.
+
+    Sem esse freio seriam todos — e com ciclo de 30 min, 48 por dia. A última
+    permitida já não informa nada que a primeira não tenha informado.
+    """
+    notificador, _, produto = _rodar_ciclos(
+        CICLOS_DE_SOBRA, 105_000, repetir_no_range=True
+    )
+
+    assert len(notificador.mensagens) == LIMITE_DE_REPETICOES
+    assert produto.repeticoes_no_mesmo_preco == LIMITE_DE_REPETICOES
+
+
+def test_preco_diferente_libera_outra_rodada():
+    """A pausa é por PREÇO, não por tempo: centavo novo é informação nova."""
+    notificador, _, produto = _rodar_ciclos(
+        CICLOS_DE_SOBRA, 105_000, repetir_no_range=True
+    )
+    assert len(notificador.mensagens) == LIMITE_DE_REPETICOES
+
+    # Mesmo produto, um centavo mais barato: a contagem zera.
+    notificador2, _, _ = _rodar_ciclos(
+        CICLOS_DE_SOBRA, 104_999, repetir_no_range=True, produto=produto
+    )
+    assert len(notificador2.mensagens) == LIMITE_DE_REPETICOES
+
+
+def test_preco_mais_alto_dentro_da_faixa_tambem_zera_a_contagem():
+    """Subir sem sair da faixa muda o que a mensagem diz, então conta como novo."""
+    _, _, produto = _rodar_ciclos(CICLOS_DE_SOBRA, 100_000, repetir_no_range=True)
+    notificador, _, _ = _rodar_ciclos(
+        CICLOS_DE_SOBRA, 105_000, repetir_no_range=True, produto=produto
+    )
+    assert len(notificador.mensagens) == LIMITE_DE_REPETICOES
+
+
+def test_sair_da_faixa_e_voltar_zera_a_contagem():
+    """Rearme é notícia. Depois de subir acima do máximo, voltar volta a avisar."""
+    _, _, produto = _rodar_ciclos(CICLOS_DE_SOBRA, 105_000, repetir_no_range=True)
+    assert produto.repeticoes_no_mesmo_preco == LIMITE_DE_REPETICOES
+
+    # Sobe acima do gatilho: rearma em silêncio e zera.
+    _, _, produto = _rodar_ciclos(
+        1, GATILHO + 1, repetir_no_range=True, produto=produto
+    )
+    assert produto.estado == ESTADO_ACIMA
+    assert produto.repeticoes_no_mesmo_preco == 0
+
+    # E o mesmo preço de antes volta a render a rodada inteira.
+    notificador, _, _ = _rodar_ciclos(
+        CICLOS_DE_SOBRA, 105_000, repetir_no_range=True, produto=produto
+    )
+    assert len(notificador.mensagens) == LIMITE_DE_REPETICOES
+
+
+def test_pausa_nao_gasta_repeticao_e_e_estavel():
+    """Depois de pausado, ciclos extras não mexem no contador nem alertam."""
+    _, _, produto = _rodar_ciclos(
+        LIMITE_DE_REPETICOES, 105_000, repetir_no_range=True
+    )
+    repositorio = RepositorioFalso()
+    notificador = NotificadorMemoria()
+
+    decisao = processar(produto, [LeituraFalsa(preco_centavos=105_000)], AGORA,
+                        repositorio, notificador, repetir_no_range=True)
+
+    assert decisao.notificar is False
+    assert decisao.motivo == "repeticoes_esgotadas"
+    assert notificador.mensagens == []
+    # não passa do limite por ficar batendo na porta
+    assert decisao.repeticoes_no_mesmo_preco == LIMITE_DE_REPETICOES
 
 
 # --- Segundo gatilho: abaixo da média histórica ------------------------------
@@ -384,6 +487,7 @@ def test_rearma_considerando_o_gatilho_da_media():
     decisao = avaliar(
         produto, [LeituraFalsa(preco_centavos=175_000)], AGORA,
         media_historica_centavos=200_000,          # limite = 180.000
+        repetir_no_range=False,
     )
     assert decisao.novo_estado == ESTADO_EM_ALERTA   # NÃO rearmou
     assert decisao.motivo == "sem_queda"
@@ -534,12 +638,62 @@ def test_alerta_calado_por_cooldown_nao_entra_no_diario():
     repositorio = RepositorioFalso()
 
     processar(produto, [LeituraFalsa(preco_centavos=105_000)], AGORA,
-              repositorio, NotificadorMemoria())
+              repositorio, NotificadorMemoria(), repetir_no_range=False)
 
     assert repositorio.notificacoes == []
 
 
 def test_notificador_memoria_nao_toca_a_rede():
     notificador = NotificadorMemoria()
-    notificador.enviar("oi")
+    assert notificador.enviar("oi") is True
     assert notificador.mensagens == ["oi"]
+
+
+# --- envio que falha ---------------------------------------------------------
+
+
+class NotificadorQuebrado:
+    """Aceita a chamada e devolve False, como o Telegram fora do ar."""
+
+    def __init__(self) -> None:
+        self.tentativas = 0
+
+    def enviar(self, mensagem, imagem=None) -> bool:
+        self.tentativas += 1
+        return False
+
+
+def test_envio_que_falha_nao_marca_o_produto_como_alertado():
+    """O caso que mais dói: o sistema acha que avisou e o usuário não recebeu.
+
+    Marcar `EM_ALERTA` com `ultimoPrecoAlertado` preenchido depois de um envio
+    perdido cala o produto pela regra dos 5% — e não por 24h, mas até o preço
+    cair mais 5% ou subir acima do máximo. O alerta não atrasaria: sumiria.
+    """
+    produto = ProdutoFalso()
+    repositorio = RepositorioFalso()
+
+    decisao = processar(produto, [LeituraFalsa(preco_centavos=105_000)], AGORA,
+                        repositorio, NotificadorQuebrado())
+
+    assert decisao.notificar is False
+    assert decisao.motivo == "falha_no_envio"
+    assert repositorio.estados == []          # estado intacto
+    assert repositorio.notificacoes == []     # e nada de diário mentindo
+
+
+def test_envio_que_falha_deixa_o_proximo_ciclo_tentar_de_novo():
+    """Com o estado preservado, a mesma leitura volta a decidir notificar."""
+    produto = ProdutoFalso()
+    repositorio = RepositorioFalso()
+    leitura = LeituraFalsa(preco_centavos=105_000)
+
+    processar(produto, [leitura], AGORA, repositorio, NotificadorQuebrado())
+
+    # Nada mudou no produto, então o ciclo seguinte reavalia do mesmo ponto.
+    notificador = NotificadorMemoria()
+    decisao = processar(produto, [leitura], AGORA, repositorio, notificador)
+
+    assert decisao.notificar is True
+    assert len(notificador.mensagens) == 1
+    assert len(repositorio.notificacoes) == 1

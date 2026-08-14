@@ -24,6 +24,35 @@ COOLDOWN_HORAS = 24
 NUMERADOR_QUEDA = 95
 DENOMINADOR_QUEDA = 100
 
+# AVISA A CADA CICLO ENQUANTO O PREÇO ESTIVER DENTRO DA FAIXA.
+#
+# Ligado, ignora as DUAS travas que calam um produto já alertado: a regra dos
+# 5% e o cooldown de 24h. Quem pediu sabe o custo — com ciclo de 30 minutos são
+# até 48 mensagens por dia POR PRODUTO em faixa.
+#
+# Por que existiam as travas: um produto que ficou barato continua barato no
+# ciclo seguinte, e no seguinte. Sem freio, a notificação deixa de ser "isto
+# mudou" e vira um relógio — e um alerta que chega o tempo todo é um alerta que
+# ninguém lê, que é a mesma coisa que não alertar.
+#
+# Desligar é trocar `ALERTA_REPETE_NO_RANGE` para `false` no workflow. Aí volta
+# a valer: um alerta por oferta, repetido só se cair mais 5%.
+REPETIR_NO_RANGE_PADRAO = True
+
+# ...E PAUSA DEPOIS DE 3 MENSAGENS NO MESMO PREÇO.
+#
+# É o freio da repetição. Sem ele, um produto parado em R$ 4.899,99 por uma
+# semana renderia ~340 mensagens idênticas — e a terceira já não informa nada
+# que a primeira não tenha informado.
+#
+# A pausa é POR PREÇO, não por tempo: qualquer centavo de diferença zera a
+# contagem e libera outras 3. Preço novo é informação nova; preço repetido não
+# é. Sair da faixa (rearme) também zera — voltar a cair depois de subir é notícia.
+#
+# Este número é a única fonte da verdade: os testes o importam em vez de repetir
+# o literal, então mudá-lo aqui muda o comportamento e as asserções juntos.
+LIMITE_DE_REPETICOES = 3
+
 DIAS_DA_MEDIA = 30
 
 # Segundo gatilho: preço notavelmente abaixo da média histórica.
@@ -59,6 +88,8 @@ class Produto(Protocol):
     ultimo_alerta_em: datetime | None
     ultimo_preco_alertado_centavos: int | None
     ativo: bool
+    # Quantas mensagens já saíram com `ultimo_preco_alertado_centavos`.
+    repeticoes_no_mesmo_preco: int
 
 
 class Leitura(Protocol):
@@ -85,6 +116,9 @@ class Decisao:
     gatilho_usado: str = GATILHO_ALVO
     limite_da_media_centavos: int | None = None
     media_historica_centavos: int | None = None
+    # Quanto o contador vale DEPOIS desta decisão. Calculado aqui, na função
+    # pura, para `processar` só persistir — a contagem é regra, não efeito.
+    repeticoes_no_mesmo_preco: int = 0
 
 
 def limite_pela_media(
@@ -121,6 +155,7 @@ def avaliar(
     *,
     media_historica_centavos: int | None = None,
     margem_media_pct: int = MARGEM_MEDIA_PCT_PADRAO,
+    repetir_no_range: bool = REPETIR_NO_RANGE_PADRAO,
 ) -> Decisao:
     """Aplica a tabela de estados da seção 10.1, e só depois o cooldown.
 
@@ -128,6 +163,9 @@ def avaliar(
     notavelmente abaixo da média histórica. Como a condição é
     `preco <= maximo OU preco <= limite_da_media`, o gatilho efetivo é o MAIOR
     dos dois — o que também deixa a regra de rearme correta de graça.
+
+    Com `repetir_no_range`, tudo que existe para CALAR um produto que continua
+    dentro da faixa é ignorado: a regra dos 5% e o cooldown. Ver a constante.
     """
     validas = leituras_validas(leituras)
     if not validas:
@@ -144,10 +182,22 @@ def avaliar(
     else:
         gatilho, gatilho_usado = gatilho_alvo, GATILHO_ALVO
 
+    # Contador de repetições: quantas mensagens já saíram com ESTE preço.
+    # Preço diferente do último alertado zera — inclusive um preço mais alto
+    # dentro da faixa, que também é informação nova.
+    ja_enviadas = (
+        produto.repeticoes_no_mesmo_preco
+        if preco == produto.ultimo_preco_alertado_centavos
+        else 0
+    )
+
     def resultado(notificar, estado, motivo):
         return Decisao(
             notificar, estado, motivo, preco, melhor,
             gatilho_usado, limite_media, media_historica_centavos,
+            # Só uma notificação de verdade avança a contagem. Silêncio a
+            # preserva: rearme e cooldown não gastam repetição.
+            ja_enviadas + 1 if notificar else ja_enviadas,
         )
 
     if produto.estado == ESTADO_ACIMA:
@@ -158,21 +208,33 @@ def avaliar(
             return resultado(False, ESTADO_ACIMA, "acima_do_gatilho")
     else:  # EM_ALERTA
         if preco > gatilho:
-            # Rearma em silêncio: o próximo mergulho volta a notificar.
-            return resultado(False, ESTADO_ACIMA, "rearmou")
+            # Rearma em silêncio: o próximo mergulho volta a notificar. Zera a
+            # contagem — sair da faixa e voltar é notícia, não repetição.
+            return Decisao(
+                False, ESTADO_ACIMA, "rearmou", preco, melhor,
+                gatilho_usado, limite_media, media_historica_centavos, 0,
+            )
 
-        ultimo = produto.ultimo_preco_alertado_centavos
-        caiu_o_bastante = (
-            ultimo is not None
-            and preco * DENOMINADOR_QUEDA <= ultimo * NUMERADOR_QUEDA
-        )
-        if caiu_o_bastante:
-            decisao = resultado(True, ESTADO_EM_ALERTA, "queda_de_5pct")
+        if repetir_no_range:
+            # A PAUSA. Cinco mensagens no mesmo preço bastam; da sexta em
+            # diante o produto cala até o preço mudar ou sair da faixa.
+            if ja_enviadas >= LIMITE_DE_REPETICOES:
+                return resultado(False, ESTADO_EM_ALERTA, "repeticoes_esgotadas")
+            decisao = resultado(True, ESTADO_EM_ALERTA, "ainda_no_range")
         else:
-            return resultado(False, ESTADO_EM_ALERTA, "sem_queda")
+            ultimo = produto.ultimo_preco_alertado_centavos
+            caiu_o_bastante = (
+                ultimo is not None
+                and preco * DENOMINADOR_QUEDA <= ultimo * NUMERADOR_QUEDA
+            )
+            if caiu_o_bastante:
+                decisao = resultado(True, ESTADO_EM_ALERTA, "queda_de_5pct")
+            else:
+                return resultado(False, ESTADO_EM_ALERTA, "sem_queda")
 
-    # Cooldown global, verificado DEPOIS das regras acima.
-    if _em_cooldown(produto, agora):
+    # Cooldown global, verificado DEPOIS das regras acima — e sem efeito quando
+    # a repetição está ligada, senão ele sozinho seguraria tudo por 24h.
+    if not repetir_no_range and _em_cooldown(produto, agora):
         # DECISÃO (ambiguidade da spec): o cooldown cala a mensagem, mas o
         # estado avança. Se o estado não avançasse, o produto tentaria
         # notificar a cada ciclo e dispararia sozinho no instante em que o
@@ -258,6 +320,7 @@ class RepositorioDeAlertas(Protocol):
         estado: str,
         preco_centavos: int | None,
         alertado_em: datetime | None,
+        repeticoes_no_mesmo_preco: int = 0,
     ) -> None: ...
 
     def media_historica_centavos(self, produto: Produto) -> int | None: ...
@@ -277,6 +340,7 @@ def processar(
     notificador: Notificador,
     *,
     margem_media_pct: int = MARGEM_MEDIA_PCT_PADRAO,
+    repetir_no_range: bool = REPETIR_NO_RANGE_PADRAO,
 ) -> Decisao:
     """Avalia e aplica: notifica e persiste o estado na mesma passagem."""
     media_historica = repositorio.media_historica_centavos(produto)
@@ -284,6 +348,7 @@ def processar(
         produto, leituras, agora,
         media_historica_centavos=media_historica,
         margem_media_pct=margem_media_pct,
+        repetir_no_range=repetir_no_range,
     )
 
     if decisao.notificar:
@@ -292,9 +357,32 @@ def processar(
         # notificação enviada, para um número que ninguém lê.
         mensagem = montar_mensagem(produto, decisao.leitura)
         imagem = getattr(decisao.leitura, "imagem", None)
-        notificador.enviar(mensagem, imagem)
+
+        # ENVIO FALHO NÃO CONTA COMO ALERTA.
+        #
+        # Marcar o estado depois de um envio que não chegou é o pior desfecho
+        # possível: o produto entra em EM_ALERTA com `ultimoPrecoAlertado`
+        # preenchido, e a regra dos 5% o cala INDEFINIDAMENTE — não por 24h,
+        # mas até o preço cair mais 5% ou subir acima do máximo. O sistema fica
+        # convencido de que avisou, e o usuário nunca recebeu nada.
+        #
+        # Não marcando, o próximo ciclo tenta de novo em 30 minutos. Uma queda
+        # temporária do Telegram custa um atraso, não um alerta perdido.
+        if not notificador.enviar(mensagem, imagem):
+            logger.error(
+                "alerta de %s NÃO foi entregue; estado preservado para nova "
+                "tentativa no próximo ciclo", produto.nome,
+            )
+            return Decisao(
+                False, produto.estado, "falha_no_envio",
+                decisao.preco_centavos, decisao.leitura,
+                decisao.gatilho_usado, decisao.limite_da_media_centavos,
+                decisao.media_historica_centavos,
+            )
+
         repositorio.atualizar_estado_alerta(
-            produto, decisao.novo_estado, decisao.preco_centavos, agora
+            produto, decisao.novo_estado, decisao.preco_centavos, agora,
+            decisao.repeticoes_no_mesmo_preco,
         )
         # O diário guarda a MENSAGEM como saiu. Ver `registrar_notificacao`.
         repositorio.registrar_notificacao(produto, {
@@ -310,7 +398,11 @@ def processar(
         })
     elif decisao.novo_estado != produto.estado:
         # Transição silenciosa (rearme ou cooldown): não mexe em
-        # ultimo_alerta_em nem em ultimo_preco_alertado.
-        repositorio.atualizar_estado_alerta(produto, decisao.novo_estado, None, None)
+        # ultimo_alerta_em nem em ultimo_preco_alertado. O contador vai junto
+        # porque o rearme precisa zerá-lo — é a transição que o libera.
+        repositorio.atualizar_estado_alerta(
+            produto, decisao.novo_estado, None, None,
+            decisao.repeticoes_no_mesmo_preco,
+        )
 
     return decisao

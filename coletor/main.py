@@ -83,6 +83,7 @@ async def processar_pendentes(
 def avaliar_alertas(
     repositorio: Repositorio, notificador, coletas, agora: datetime,
     margem_media_pct: int = 10,
+    repetir_no_range: bool = alertas.REPETIR_NO_RANGE_PADRAO,
 ) -> int:
     """Agrupa as leituras por produto e roda a máquina de estados em cada um."""
     por_produto = defaultdict(list)
@@ -132,6 +133,7 @@ def avaliar_alertas(
                 produto, leituras, agora, repositorio,
                 notificador_para(produto_ref),
                 margem_media_pct=margem_media_pct,
+                repetir_no_range=repetir_no_range,
             )
             logger.info(
                 "produto %s: %s -> %s%s",
@@ -269,7 +271,8 @@ async def executar_ciclo(
             )
             resumo["coletadas"] = len(coletas)
             resumo["notificados"] = avaliar_alertas(
-                repositorio, notificador, coletas, agora, cfg.margem_media_pct
+                repositorio, notificador, coletas, agora, cfg.margem_media_pct,
+                cfg.alerta_repete_no_range,
             )
 
         # Coleta forçada FORA da janela não mexe no relógio.

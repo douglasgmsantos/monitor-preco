@@ -38,6 +38,11 @@ jobs:
           # vira string vazia — que `config._booleano` lê como false. A raspagem
           # de catálogo NÃO é forçada por isto: segue no intervalo de 24h.
           FORCAR_COLETA:          ${{ inputs.forcar }}
+          # 'true' = avisa a cada ciclo enquanto o preço estiver na faixa, sem
+          # regra dos 5% e sem cooldown. Com ciclo de 30 min são até 48
+          # mensagens por dia POR PRODUTO em faixa. Trocar para 'false' devolve
+          # o comportamento de um alerta por oferta.
+          ALERTA_REPETE_NO_RANGE: 'true'
           LIMIAR_SANIDADE:        '0.70'
           TETO_CENTAVOS:          '100000000'
           MARGEM_MEDIA_PCT:       '10'

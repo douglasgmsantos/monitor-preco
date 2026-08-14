@@ -549,17 +549,57 @@ na mensagem como referência de variação.
 
 ### O que limita a quantidade de mensagens
 
+Existem **dois modos**, escolhidos por `ALERTA_REPETE_NO_RANGE` no workflow.
+
+#### Modo repetição (padrão hoje: `true`)
+
+Avisa a cada ciclo enquanto o preço estiver na faixa, **até 3 mensagens no mesmo
+preço** (`LIMITE_DE_REPETICOES` em `coletor/alertas.py`). Da quarta em diante,
+pausa.
+
+| Situação | Ação |
+|---|---|
+| Preço entra na faixa | notifica, vai para `EM_ALERTA`, contador = 1 |
+| Continua na faixa, mesmo preço, contador < 3 | notifica de novo |
+| Continua na faixa, mesmo preço, contador = 3 | **pausa** (`repeticoes_esgotadas`) |
+| Qualquer preço diferente, ainda na faixa | contador zera, libera outras 3 |
+| Volta acima do gatilho | silêncio, rearma para `ACIMA`, contador zera |
+| Indisponível ou leitura suspeita | silêncio, estado inalterado |
+
+A pausa é **por preço, não por tempo**. Preço novo é informação nova; preço
+repetido não é — a terceira mensagem já não diz nada que a primeira não tenha
+dito. Sem esse freio, um produto parado por uma semana renderia ~340 mensagens
+idênticas (ciclo de 30 min).
+
+A constante é a única fonte do número: os testes a importam em vez de repetir o
+literal, então ajustá-la move comportamento e asserções juntos.
+
+Sair da faixa e voltar também zera: voltar a cair depois de subir é notícia.
+
+#### Modo oferta única (`ALERTA_REPETE_NO_RANGE=false`)
+
 | Situação | Ação |
 |---|---|
 | Preço cruza o gatilho pela primeira vez | notifica, vai para `EM_ALERTA` |
 | Continua abaixo, sem cair mais 5% | silêncio |
 | Cai mais 5% abaixo do último preço avisado | renotifica |
 | Volta acima do gatilho | silêncio e rearma para `ACIMA` |
-| Indisponível ou leitura suspeita | silêncio, estado inalterado |
 
 Mais cooldown de no máximo 1 mensagem por produto a cada 24h. Numa simulação de
 84h com o preço abaixo do alvo a maior parte do tempo: **4 mensagens em 14
 ciclos**.
+
+> O cooldown **não** vale no modo repetição — se valesse, seguraria tudo por 24h
+> e a repetição não existiria.
+
+#### Envio que falha não conta como alerta
+
+`notificador.enviar` devolve `False` quando o Telegram recusa, e `processar`
+**não** marca o produto nesse caso. Marcar seria o pior desfecho possível: o
+produto entraria em `EM_ALERTA` com `ultimoPrecoAlertado` preenchido e ficaria
+calado — no modo oferta única, indefinidamente. O sistema acharia que avisou, e
+o usuário nunca teria recebido nada. Sem marcar, o ciclo seguinte tenta de novo
+em 30 minutos.
 
 A mensagem muda de título conforme o gatilho. Dizer "Preço atingido" quando só a
 média justificou o alerta seria falso, então nesse caso o título é
