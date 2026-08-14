@@ -4,3 +4,8 @@ selectolax==0.3.*
 pytest==8.3.*
 pytest-asyncio==0.24.*
 respx==0.21.*
+# Análise estática de nome indefinido. Não é enfeite: os testes do Firestore
+# exigem o emulador (e Java), ficam pulados na maioria das máquinas, e sem eles
+# uma chamada a função apagada só aparece em produção — foi o que aconteceu em
+# 2026-08-14. Ver tests/test_sanidade_estatica.py.
+pyflakes==3.4.*

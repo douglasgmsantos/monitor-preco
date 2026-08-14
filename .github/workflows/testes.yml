@@ -1,0 +1,96 @@
+name: testes
+
+# Portão que faltava. Em 2026-08-14 um `NameError` derrubou a coleta em todas
+# as fontes por horas: a função existia quando o código foi escrito e foi
+# apagada depois, num refactor. A suíte local ficou verde porque o caminho
+# quebrado só é exercitado pelos testes do emulador do Firestore, que exigem
+# Java e ficam pulados. Nada rodava teste antes do deploy — o workflow do
+# coletor só executa o coletor.
+#
+# Aqui os testes do emulador rodam DE VERDADE: o runner do GitHub já tem Java,
+# então os 85 testes pulados na máquina de desenvolvimento passam a valer.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # Push seguido cancela o anterior: só interessa o resultado do topo da branch.
+  group: testes-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # Roda antes do pytest e sem depender de nada: se houver nome indefinido,
+      # o log aponta o arquivo e a linha em segundos, em vez de sair enterrado
+      # num traceback de teste.
+      - name: Nomes indefinidos (pyflakes)
+        run: python -m pyflakes coletor tests
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Subir o emulador do Firestore
+        run: |
+          npm install -g firebase-tools
+          firebase emulators:start --only firestore --project demo-monitor &
+          # Espera o endpoint de limpeza responder — é o único que o emulador
+          # implementa e um servidor HTTP qualquer não. Mesmo discriminador que
+          # `tests/test_repositorio.py` usa para decidir se pula.
+          alvo='http://127.0.0.1:8080/emulator/v1/projects/demo-monitor/databases/(default)/documents'
+          for _ in $(seq 1 60); do
+            if [ "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$alvo")" = "200" ]; then
+              echo "emulador no ar"; exit 0
+            fi
+            sleep 1
+          done
+          echo "emulador não subiu em 60s"; exit 1
+
+      - name: pytest
+        env:
+          FIRESTORE_EMULATOR_HOST: 127.0.0.1:8080
+        # `-ra` lista o MOTIVO de cada skip no resumo. É o que o passo seguinte
+        # lê — e é o que faltava na leitura humana do "85 skipped".
+        #
+        # `pipefail` é obrigatório: sem ele o status do passo seria o do `tee`,
+        # que sempre dá 0, e um pytest VERMELHO passaria batido. Seria repetir
+        # o mesmo erro que este workflow existe para evitar — um verde falso.
+        run: |
+          set -o pipefail
+          python -m pytest -q -ra 2>&1 | tee /tmp/pytest.txt
+
+      - name: Conferir que os testes do Firestore não foram pulados
+        # Um emulador que morre no meio faz o pytest voltar a PULAR tudo e sair
+        # verde — o mesmo silêncio que deixou o `NameError` passar. Aqui esse
+        # silêncio vira vermelho.
+        #
+        # Nem todo skip é problema: os templates de loja estão no .gitignore
+        # (são páginas capturadas, pesadas e efêmeras), então os testes que
+        # dependem deles pulam no CI por projeto. Só o skip do EMULADOR falha.
+        run: |
+          if grep -q "emulador do Firestore não responde" /tmp/pytest.txt; then
+            echo "::error::testes do Firestore foram PULADOS — emulador fora do ar"
+            exit 1
+          fi
+          echo "testes do Firestore executaram"
+
+      - name: Build do front
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build

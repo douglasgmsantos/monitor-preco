@@ -33,6 +33,10 @@ class Config:
     margem_media_pct: int = MARGEM_MEDIA_PCT_PADRAO
     intervalo_raspagem_horas: int = INTERVALO_RASPAGEM_HORAS_PADRAO
     categorias_raspagem: tuple[str, ...] = ()
+    # Execução manual: coleta os produtos AGORA, sem esperar a janela de 30 min.
+    # Não afeta a raspagem de catálogo, que tem cadência própria de 24h e é a
+    # parte cara (dezenas de páginas de listagem nas lojas). Ver `executar_ciclo`.
+    forcar_coleta: bool = False
 
 
 def carregar() -> Config:
@@ -62,4 +66,15 @@ def carregar() -> Config:
             ).split(",")
             if url.strip()
         ),
+        forcar_coleta=_booleano(os.environ.get("FORCAR_COLETA")),
     )
+
+
+def _booleano(valor: str | None) -> bool:
+    """Aceita o que um `workflow_dispatch` do GitHub entrega.
+
+    A entrada de um workflow chega como a STRING "true"/"false" — nunca como
+    booleano. `bool("false")` é True, então converter na mão aqui é o que
+    impede uma execução agendada de se comportar como manual.
+    """
+    return (valor or "").strip().lower() in {"1", "true", "sim", "yes"}

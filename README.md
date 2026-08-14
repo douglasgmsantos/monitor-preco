@@ -711,6 +711,14 @@ FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 GCLOUD_PROJECT=demo-monitor \
 Nenhum teste toca a rede nem o Firestore de produção. O emulador roda com project
 id `demo-monitor` e é apagado antes de cada teste.
 
+> **`85 skipped` não é ruído — é a camada do Firestore sem cobertura.** Sem Java,
+> os testes do emulador pulam e o pytest ainda sai verde. Foi assim que um
+> `NameError` chegou em produção em 2026-08-14 (ver *Lição aprendida em
+> produção*). Duas redes fecham isso: `tests/test_sanidade_estatica.py`, que roda
+> pyflakes em `coletor/` e `tests/` sem precisar de nada, e o workflow
+> [`testes.yml`](.github/workflows/testes.yml), que sobe o emulador no runner —
+> onde Java já existe — e **falha se os testes do Firestore forem pulados**.
+
 ### Fixtures
 
 `tests/fixtures/` contém 4 páginas de produto capturadas de lojas reais em
@@ -750,6 +758,28 @@ O cron roda de 15 em 15 minutos, mas a coleta pesada só acontece quando
 atrasa e **pula** execuções sob carga; a cadência efetiva é "pelo menos a cada
 3h", não "exatamente às 00h, 03h, 06h…". Nunca calcule o tempo decorrido a
 partir do horário agendado.
+
+### Coletar os produtos agora (conferência manual)
+
+Actions → **coletor** → *Run workflow*, com **Forçar** marcado (é o padrão).
+Ignora a janela de 30 minutos e lê o preço de todas as fontes ativas na hora.
+
+Três coisas que esse modo **não** faz, de propósito:
+
+- **Não mexe no relógio de cadência.** Forçar fora da janela não grava
+  `sistema/controle`. Se gravasse, uma conferência às 12h05 empurraria a coleta
+  automática de 12h30 para 12h35 — um teste manual deslocaria o agendamento de
+  produção. Forçar *dentro* da janela grava normal: ali a coleta ia acontecer de
+  qualquer jeito, e não gravar faria a próxima rodar em 15 min, o dobro da
+  cadência combinada.
+- **Não força a raspagem do catálogo.** Ela tem portão próprio de 24h e varre
+  dezenas de páginas de listagem; a composição da vitrine muda em dias, não em
+  minutos. Só os produtos acompanhados são lidos.
+- **Não silencia os alertas.** Preço lido numa execução forçada é preço real: se
+  bater o valor máximo, o Telegram dispara (respeitando o cooldown de 24h). Para
+  conferir sem risco de mensagem, o caminho é o cooldown, não o modo forçado.
+
+O portão está em `executar_ciclo` e é coberto por `tests/test_ciclo.py`.
 
 ---
 
@@ -838,6 +868,36 @@ execuções reais falharam por coisas que o emulador aceita sem reclamar:
 E **a verificação de rede feita em laboratório não vale para produção**: a
 Pichau, aprovada de IP residencial, recusou o datacenter do runner na primeira
 execução. Ver o aviso na seção de lojas.
+
+### Suíte verde, produção quebrada (2026-08-14)
+
+Em 2026-08-14 a coleta estourou nas **9 fontes**, ciclo após ciclo:
+
+```
+NameError: name '_dia_atualizado' is not defined
+```
+
+A função tinha sido apagada dias antes, num refactor que removeu a média de 30
+dias — mas `registrar_leitura` continuava chamando. **A suíte estava verde: 266
+passed.**
+
+Três coisas conspiraram, e cada uma tem um conserto:
+
+| O que falhou | Por quê | Conserto |
+|---|---|---|
+| A suíte não pegou | Python só resolve nome global ao **executar** a linha; o módulo importa numa boa | `tests/test_sanidade_estatica.py` — pyflakes resolve na hora de **ler** |
+| O único teste do caminho não rodou | Exige o emulador, que exige Java, ausente na máquina de dev | `testes.yml` sobe o emulador no runner e **falha se pular** |
+| Nada rodava teste antes do deploy | `coletor.yml` só executa o coletor | `testes.yml` em todo push e PR |
+
+O prejuízo foi menor do que parecia: a exceção sobe de dentro da
+`@firestore.transactional`, **antes do commit**, então nada foi escrito pela
+metade — e `falhasSeguidas` também não foi incrementado, porque fazia parte da
+mesma transação abortada. Nenhuma fonte foi condenada injustamente. Perdeu-se só
+a coleta do período.
+
+**A lição que generaliza:** "N passed" não é o número que importa quando existe
+um "M skipped" ao lado. Skip é cobertura ausente disfarçada de aprovação, e o
+resumo do pytest apresenta os dois com o mesmo peso.
 
 ## O que falta
 

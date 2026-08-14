@@ -92,9 +92,9 @@ def principal(argumentos: list[str] | None = None) -> int:
         url = achada.url
         if busca_de(url) != "capturada":
             print(
-                f"AVISO: a loja desta fonte busca DIRETA, então o coletor vai "
-                f"ignorar esta captura.\n       Para usá-la, mude `busca` da loja "
-                f"em coletor/lojas.py.",
+                "AVISO: a loja desta fonte busca DIRETA, então o coletor vai "
+                "ignorar esta captura.\n       Para usá-la, mude `busca` da loja "
+                "em coletor/lojas.py.",
                 file=sys.stderr,
             )
 

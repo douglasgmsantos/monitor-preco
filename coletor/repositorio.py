@@ -156,6 +156,34 @@ def id_bucket_diario(fonte_id: str, instante: datetime) -> str:
     return f"{fonte_id}_{chave_ano(instante)}"
 
 
+def _dia_atualizado(anterior: dict | None, preco_centavos: int) -> dict:
+    """Recalcula a entrada do dia no rollup diário.
+
+    Guarda `soma` e `n` em vez da média já dividida: assim a atualização é
+    incremental (não precisa reler as leituras do dia) e a média sai exata,
+    ponderada por amostra. Média de médias erraria sempre que os dias tivessem
+    contagens diferentes.
+
+    `fech` é o fechamento — o último preço visto no dia — e é o que o gráfico
+    diário desenha.
+    """
+    if not anterior:
+        return {
+            "min": preco_centavos,
+            "max": preco_centavos,
+            "soma": preco_centavos,
+            "n": 1,
+            "fech": preco_centavos,
+        }
+    return {
+        "min": min(anterior.get("min", preco_centavos), preco_centavos),
+        "max": max(anterior.get("max", preco_centavos), preco_centavos),
+        "soma": (anterior.get("soma") or 0) + preco_centavos,
+        "n": (anterior.get("n") or 0) + 1,
+        "fech": preco_centavos,
+    }
+
+
 # ----------------------------------------------------------------------------
 # Inicialização
 # ----------------------------------------------------------------------------

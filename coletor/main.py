@@ -226,7 +226,7 @@ async def executar_ciclo(
         notificador = NotificadorTelegram(cfg.telegram_bot_token, cfg.telegram_chat_id)
 
     resumo = {"pendentes": 0, "coletadas": 0, "notificados": 0,
-              "coletou": False, "catalogo": None}
+              "coletou": False, "forcada": False, "catalogo": None}
     limitador = LimitadorPorHost()
 
     async with httpx.AsyncClient(follow_redirects=True) as cliente:
@@ -243,13 +243,16 @@ async def executar_ciclo(
 
         # Passos 3 e 4 — a cadência vem de sistema/controle, nunca do cron.
         ultima = repositorio.ler_controle()
-        if not esta_no_minuto(ultima, agora, cfg.intervalo_coleta_minutos):
+        na_janela = esta_no_minuto(ultima, agora, cfg.intervalo_coleta_minutos)
+        if not na_janela and not cfg.forcar_coleta:
             proxima = ultima + timedelta(minutes=cfg.intervalo_coleta_minutos)
             logger.info(
                 "fora da janela de coleta (última em %s, próxima a partir de %s)",
                 ultima, proxima,
             )
             return resumo
+        if not na_janela:
+            logger.info("coleta FORÇADA: fora da janela, rodando a pedido")
 
         fontes = repositorio.listar_fontes_ativas()
         logger.info("coletando %d fonte(s) ativa(s)", len(fontes))
@@ -269,8 +272,19 @@ async def executar_ciclo(
                 repositorio, notificador, coletas, agora, cfg.margem_media_pct
             )
 
-        repositorio.gravar_controle(agora)
+        # Coleta forçada FORA da janela não mexe no relógio.
+        #
+        # `sistema/controle` é o que define a cadência real. Uma execução manual
+        # às 12h05 que gravasse ali empurraria a próxima automática para 12h35,
+        # deslocando o agendamento inteiro — um teste passaria a ter efeito
+        # colateral sobre a produção. Forçar dentro da janela grava normalmente:
+        # ali a coleta ia acontecer de qualquer jeito.
+        if na_janela:
+            repositorio.gravar_controle(agora)
+        else:
+            logger.info("coleta forçada: relógio de cadência preservado")
         resumo["coletou"] = True
+        resumo["forcada"] = not na_janela
 
     return resumo
 

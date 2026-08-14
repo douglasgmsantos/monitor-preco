@@ -9,7 +9,6 @@ from coletor.alertas import (
     ESTADO_ACIMA,
     ESTADO_EM_ALERTA,
     avaliar,
-    formatar_reais,
     limite_pela_media,
     montar_mensagem,
     processar,

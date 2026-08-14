@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '*/15 * * * *'
   workflow_dispatch:
+    inputs:
+      forcar:
+        description: 'Coletar os produtos agora, sem esperar a janela de 30 min'
+        type: boolean
+        default: true
 
 concurrency:
   group: coletor
@@ -29,6 +34,10 @@ jobs:
           TELEGRAM_BOT_TOKEN:     ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:       ${{ secrets.TELEGRAM_CHAT_ID }}
           INTERVALO_COLETA_MINUTOS: '30'
+          # Só o disparo manual força. No `schedule`, `inputs` é vazio e isto
+          # vira string vazia — que `config._booleano` lê como false. A raspagem
+          # de catálogo NÃO é forçada por isto: segue no intervalo de 24h.
+          FORCAR_COLETA:          ${{ inputs.forcar }}
           LIMIAR_SANIDADE:        '0.70'
           TETO_CENTAVOS:          '100000000'
           MARGEM_MEDIA_PCT:       '10'
