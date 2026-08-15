@@ -14,7 +14,7 @@ import httpx
 import pytest
 import respx
 
-from coletor import captura, coleta
+from coletor import captura, coleta, parser
 from coletor.parser import ERROS_DE_PARSE
 
 AGORA = datetime(2026, 8, 13, 12, 0, tzinfo=timezone.utc)
@@ -226,17 +226,33 @@ def test_workflow_usa_service_account_e_nao_oauth2():
 
 
 @pytest.mark.skipif(WORKFLOW is None, reason="workflow do n8n ausente")
-def horas_do_gatilho() -> int:
-    """Intervalo do scheduleTrigger, em horas.
+def disparos_por_dia() -> int:
+    """Quantas vezes o n8n roda por dia, seja qual for a forma do gatilho.
 
-    `hoursInterval` some do JSON quando vale 1 — o n8n não exporta o valor
-    padrão. Ler direto com `[...]` dava `KeyError` e o teste morria dizendo
-    "chave ausente" quando o que mudou foi a cadência de 3h para 1h.
+    Conta em disparos/dia em vez de horas porque o gatilho já foi por hora
+    (`hoursInterval`) e agora é por cron, e a pergunta que importa é sempre a
+    mesma: com que frequência isto bate nas lojas.
+
+    `hoursInterval` some do JSON quando vale 1 — o n8n não exporta o padrão.
     """
     gatilho = next(n for n in _fluxo()["nodes"] if n["type"].endswith("scheduleTrigger"))
-    intervalo = gatilho["parameters"]["rule"]["interval"][0]
-    assert intervalo.get("field") == "hours", f"gatilho não é por hora: {intervalo}"
-    return intervalo.get("hoursInterval", 1)
+    total = 0
+    for intervalo in gatilho["parameters"]["rule"]["interval"]:
+        campo = intervalo.get("field")
+        if campo == "hours":
+            total += 24 // intervalo.get("hoursInterval", 1)
+        elif campo == "minutes":
+            total += (24 * 60) // intervalo.get("minutesInterval", 1)
+        elif campo == "cronExpression":
+            minuto, hora = intervalo["expression"].split()[:2]
+            total += len(minuto.split(",")) * len(hora.split(","))
+        else:
+            raise AssertionError(f"campo de gatilho não previsto: {intervalo}")
+    return total
+
+
+def horas_entre_capturas() -> float:
+    return 24 / disparos_por_dia()
 
 
 def _nome_do_no_por_tipo(sufixo: str) -> str:
@@ -314,7 +330,7 @@ def test_nenhum_segredo_versionado_no_workflow():
 def test_workflow_captura_com_folga_antes_de_vencer():
     """A cadência do n8n precisa ser menor que a validade da captura, senão ela
     vence antes de o coletor ler e o sistema não coleta nunca."""
-    assert horas_do_gatilho() < captura.HORAS_DE_VALIDADE_PADRAO
+    assert horas_entre_capturas() < captura.HORAS_DE_VALIDADE_PADRAO
 
 
 @pytest.mark.skipif(WORKFLOW is None, reason="workflow do n8n ausente")
@@ -325,15 +341,67 @@ def test_cada_captura_dispara_uma_coleta_forcada():
     forçado NÃO grava `sistema/controle` — logo não deduplica: são coletas reais
     somadas às agendadas, cada uma batendo em todas as fontes ativas.
 
-    O teto de 4 por hora é folgado de propósito (hoje é 1). Existe para que
-    baixar a cadência a minutos quebre aqui, e não vire tráfego nas lojas que
-    ninguém percebeu ter criado.
+    O teto existe porque foi assim que a Terabyte bloqueou o IP do n8n: a
+    cadência subiu de 3h para 1h e as capturas viraram desafio do Cloudflare.
     """
-    disparos_por_dia = 24 / horas_do_gatilho()
-    assert disparos_por_dia <= 24 * 4, (
-        f"{disparos_por_dia:.0f} coletas forçadas por dia — a captura ficou "
+    assert disparos_por_dia() <= 24, (
+        f"{disparos_por_dia()} coletas forçadas por dia — a captura ficou "
         "frequente demais para disparar coleta a cada execução"
     )
+
+
+@pytest.mark.skipif(WORKFLOW is None, reason="workflow do n8n ausente")
+def test_gatilho_por_minuto_nao_passa_de_59():
+    """A armadilha do campo "Minutes" do n8n.
+
+    Ele vira o cron `*/N * * * *`, e o campo de minutos do cron só vai até 59.
+    Com N=90 a expressão é ACEITA e resolve como de hora em hora — sem erro,
+    sem aviso (medido em 2026-08-15). Intervalo acima de 1h precisa ser cron.
+    """
+    gatilho = next(n for n in _fluxo()["nodes"] if n["type"].endswith("scheduleTrigger"))
+    for intervalo in gatilho["parameters"]["rule"]["interval"]:
+        if intervalo.get("field") == "minutes":
+            assert intervalo.get("minutesInterval", 1) <= 59, (
+                "intervalo em minutos acima de 59 vira `*/N` inválido e o n8n "
+                "silenciosamente dispara de hora em hora — use cronExpression"
+            )
+
+
+@pytest.mark.skipif(WORKFLOW is None, reason="workflow do n8n ausente")
+def test_marcas_de_bloqueio_do_n8n_batem_com_as_do_parser():
+    """A lista de bloqueio existe nos dois lados e precisa continuar igual.
+
+    O n8n recusa a captura na origem (não sobrescreve a boa por uma página de
+    desafio); o parser recusa na leitura. Se as listas divergirem, uma página
+    passa por um e é barrada pelo outro — e a que passa vira `sem_jsonld`, que
+    é erro de PARSE e condena a fonte em 5 ciclos por problema de transporte.
+    """
+    codigo = _no("Comprimir")["parameters"]["jsCode"]
+    trecho = codigo.split("MARCAS_DE_BLOQUEIO = [", 1)[1].split("]", 1)[0]
+    no_n8n = {
+        linha.strip().strip(",").strip("'\"")
+        for linha in trecho.splitlines()
+        if linha.strip() and not linha.strip().startswith("//")
+    }
+    assert no_n8n == set(parser.MARCAS_DE_BLOQUEIO), (
+        f"só no n8n: {no_n8n - set(parser.MARCAS_DE_BLOQUEIO)}\n"
+        f"só no parser: {set(parser.MARCAS_DE_BLOQUEIO) - no_n8n}"
+    )
+
+
+@pytest.mark.skipif(WORKFLOW is None, reason="workflow do n8n ausente")
+def test_piso_de_tamanho_recusa_o_desafio_do_cloudflare():
+    """1 KB com `<html lang="en-US">` é desafio, não produto.
+
+    Em 15/08 as três capturas da Terabyte vieram assim, passaram pelo piso
+    antigo de 500 chars e foram gravadas como conteúdo — o coletor gastou 4
+    falhas seguidas em cada fonte. Na quinta, a fonte é desativada.
+    """
+    codigo = _no("Comprimir")["parameters"]["jsCode"]
+    piso = int(codigo.split("MINIMO_DE_PAGINA_REAL = ", 1)[1].split(";", 1)[0])
+    # Acima do 1 KB que chegou, e MUITO abaixo da menor página real medida
+    # (Terabyte, 196 KB) — o piso não pode encostar em página legítima.
+    assert 1024 < piso < 100_000
 
 
 # ---------------------------------------------------------------------------

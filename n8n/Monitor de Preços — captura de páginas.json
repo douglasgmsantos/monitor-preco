@@ -34,7 +34,8 @@
         "rule": {
           "interval": [
             {
-              "field": "hours"
+              "field": "hours",
+              "hoursInterval": 3
             }
           ]
         }
@@ -47,7 +48,7 @@
         288,
         -80
       ],
-      "notes": "Mesma cadência do coletor (INTERVALO_COLETA_HORAS=3). Precisa ser MENOR que HORAS_DE_VALIDADE (6h) em coletor/captura.py, senão a captura vence antes de ser lida."
+      "notes": "A cada 3 horas — 8 capturas por dia. Era assim no desenho original; passou por 1h (que fez a Terabyte bloquear o IP) e por 1h30 antes de voltar.\n\nA CADÊNCIA IMPORTA DUAS VEZES:\n1) precisa ser MENOR que HORAS_DE_VALIDADE_PADRAO (6h) em coletor/captura.py, senão a captura vence antes de o coletor ler e o sistema não coleta nunca;\n2) cada execução termina disparando uma coleta FORÇADA no GitHub Actions, que bate em TODAS as fontes ativas. Subir a frequência multiplica requisição nas lojas, e foi exatamente isso que derrubou a Terabyte em 2026-08-15.\n\nSE UM DIA PRECISAR DE INTERVALO QUEBRADO (1h30, 2h30): NÃO use o campo 'Minutes'. O n8n o transforma em `*/N * * * *`, e o campo de minutos do cron só vai até 59 — `*/90` é ACEITO e dispara de hora em hora, sem erro e sem aviso (medido em 2026-08-15). Use duas regras de cronExpression alternando :00 e :30 em horas defasadas."
     },
     {
       "parameters": {
@@ -134,7 +135,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Enxuga o HTML e monta o documento no formato do Firestore REST.\n//\n// SEM require() e SEM CompressionStream: o sandbox deste n8n recusa os dois\n// (\"Module 'zlib' is disallowed\", e CompressionStream indisponível). Sobra\n// enxugar o HTML até caber no teto de 1 MiB por documento do Firestore.\n//\n// MEDIDO em 2026-08-13, com o preço conferido em cada variante:\n//\n//   Amazon    1.209 KB -> 940 KB (só style/comentários) -> 655 KB (sem scripts)\n//   Pichau      402 KB -> 178 KB                        -> 64 KB, PERDE O PREÇO\n//   Terabyte    196 KB -> 158 KB                        -> 143 KB\n//\n// O corte de <script> é o que dá folga de verdade, mas quebra a Pichau: o preço\n// à vista dela vive num <script> comum, não no ld+json. Daí a exceção abaixo.\n\nconst TETO_FIRESTORE = 1048576;   // 1 MiB por documento\n\n// Domínios cujo preço mora num <script> COMUM. Para todos os outros, só o\n// ld+json é preservado — que é onde KaBuM, Terabyte e Pichau publicam o Product,\n// e a Amazon nem usa (o preço dela está no DOM).\nconst PRECISA_DOS_SCRIPTS = ['pichau.com.br'];\n\nconst html = $json.data ?? '';\nconst { fonteId, url, loja, host } = $('Escolher o que capturar').item.json;\n\nif (typeof html !== 'string' || html.length < 500) {\n  throw new Error(\n    `${loja}: resposta vazia ou curta demais (${html.length} chars) para ${url}. ` +\n    'A loja bloqueou, ou responseFormat não é text.',\n  );\n}\n\n// Rede de segurança contra o erro nº 1 da integração: HTML que passou por JSON\n// chega com as aspas escapadas, nada casa, e o coletor reporta `sem_jsonld`\n// apontando para a loja em vez de para o transporte.\nconst amostra = html.slice(0, 100000);\nconst aspas = (amostra.match(/\"/g) || []).length;\nconst escapadas = (amostra.match(/\\\\\"/g) || []).length;\nif (aspas > 0 && escapadas / aspas >= 0.5) {\n  throw new Error(\n    `${loja}: HTML com aspas ESCAPADAS (${escapadas}/${aspas}). ` +\n    'Passou por JSON.stringify. Confira responseFormat=text no nó de busca.',\n  );\n}\n\nconst manterScripts = PRECISA_DOS_SCRIPTS.some(\n  (d) => host === d || host.endsWith('.' + d),\n);\n\nlet enxuto = html\n  .replace(/<style\\b[^>]*>[\\s\\S]*?<\\/style>/gi, '')\n  .replace(/<!--[\\s\\S]*?-->/g, '')\n  .replace(/<svg\\b[^>]*>[\\s\\S]*?<\\/svg>/gi, '')\n  .replace(/<noscript\\b[^>]*>[\\s\\S]*?<\\/noscript>/gi, '');\n\nif (!manterScripts) {\n  // ld+json sempre fica: é onde três das quatro lojas publicam o preço.\n  enxuto = enxuto.replace(\n    /<script\\b[^>]*>[\\s\\S]*?<\\/script>/gi,\n    (bloco) => (/ld\\+json/i.test(bloco.slice(0, 120)) ? bloco : ''),\n  );\n}\n\nenxuto = enxuto.replace(/[ \\t]{2,}/g, ' ').replace(/\\n{2,}/g, '\\n');\n\n// Bytes UTF-8 sem Buffer nem TextEncoder: encodeURIComponent vira cada byte\n// não-ASCII em %XX, e trocar cada %XX por um caractere iguala comprimento a\n// contagem de bytes.\nconst bytes = (s) => encodeURIComponent(s).replace(/%[0-9A-F]{2}/gi, 'x').length;\nconst bytesEnxuto = bytes(enxuto);\n\nif (bytesEnxuto > TETO_FIRESTORE) {\n  throw new Error(\n    `${loja}: ${Math.round(bytesEnxuto / 1024)} KB depois de enxugar, ainda acima ` +\n    `do teto de 1 MiB. Página cresceu; considere cortar mais ou usar Cloud Storage.`,\n  );\n}\n\nreturn [{\n  json: {\n    fonteId,\n    loja,\n    kbOriginal: Math.round(bytes(html) / 1024),\n    kbNoDocumento: Math.round(bytesEnxuto / 1024),\n    manterScripts,\n    corpo: {\n      fields: {\n        url: { stringValue: url },\n        html: { stringValue: enxuto },\n        codificacao: { stringValue: 'texto' },\n        bytes: { integerValue: String(bytesEnxuto) },\n        capturadoEm: { timestampValue: new Date().toISOString() },\n      },\n    },\n  },\n}];"
+        "jsCode": "// Enxuga o HTML e monta o documento no formato do Firestore REST.\n//\n// SEM require() e SEM CompressionStream: o sandbox deste n8n recusa os dois\n// (\"Module 'zlib' is disallowed\", e CompressionStream indisponível). Sobra\n// enxugar o HTML até caber no teto de 1 MiB por documento do Firestore.\n//\n// MEDIDO em 2026-08-13, com o preço conferido em cada variante:\n//\n//   Amazon    1.209 KB -> 940 KB (só style/comentários) -> 655 KB (sem scripts)\n//   Pichau      402 KB -> 178 KB                        -> 64 KB, PERDE O PREÇO\n//   Terabyte    196 KB -> 158 KB                        -> 143 KB\n//\n// O corte de <script> é o que dá folga de verdade, mas quebra a Pichau: o preço\n// à vista dela vive num <script> comum, não no ld+json. Daí a exceção abaixo.\n\nconst TETO_FIRESTORE = 1048576;   // 1 MiB por documento\n\n// Domínios cujo preço mora num <script> COMUM. Para todos os outros, só o\n// ld+json é preservado — que é onde KaBuM, Terabyte e Pichau publicam o Product,\n// e a Amazon nem usa (o preço dela está no DOM).\nconst PRECISA_DOS_SCRIPTS = ['pichau.com.br'];\n\nconst html = $json.data ?? '';\nconst { fonteId, url, loja, host } = $('Escolher o que capturar').item.json;\n\n// PISO DE TAMANHO. Página de produto de verdade nunca é pequena — medido em\n// 2026-08-13/15: Terabyte 196 KB, Pichau 402 KB, Amazon 1.2 MB. Em 15/08 as três\n// capturas da Terabyte vieram com 1 KB e `<html lang=\"en-US\">`: desafio do\n// Cloudflare, servido com HTTP 200. Passavam do piso antigo de 500 chars, eram\n// gravadas como se fossem conteúdo, e o coletor gastava uma falha em cada uma —\n// cinco seguidas desativam a fonte. Melhor NÃO capturar do que capturar lixo:\n// `sem_captura` não condena a fonte; captura inválida condena.\nconst MINIMO_DE_PAGINA_REAL = 20000;\n\nif (typeof html !== 'string' || html.length < MINIMO_DE_PAGINA_REAL) {\n  throw new Error(\n    `${loja}: ${html.length} chars, abaixo do piso de ${MINIMO_DE_PAGINA_REAL} ` +\n    `para ${url}. Página de bloqueio ou desafio, não a do produto. ` +\n    'A captura anterior fica preservada.',\n  );\n}\n\n// PISO NÃO BASTA: a Pichau serve manutenção com 119 KB e HTTP 200 — grande, e\n// mesmo assim sem preço nenhum. Estas marcas espelham MARCAS_DE_BLOQUEIO em\n// coletor/parser.py, e um teste mantém as duas listas iguais.\nconst MARCAS_DE_BLOQUEIO = [\n  'just a moment',\n  'checking your browser',\n  'enable javascript and cookies to continue',\n  'digite os caracteres',\n  'type the characters you see',\n  \"sorry, we just need to make sure you're not a robot\",\n  'request blocked',\n  'access denied',\n  'site em manutenção',\n  // com e sem cedilha: a Pichau já serviu das duas formas, e não há\n  // normalização de acento em nenhum dos dois lados.\n  'site em manutencao',\n];\n\nconst inicio = html.slice(0, 4000).toLowerCase();\nconst marca = MARCAS_DE_BLOQUEIO.find((m) => inicio.includes(m));\nif (marca) {\n  throw new Error(\n    `${loja}: página de BLOQUEIO (\\\"${marca}\\\") em ${url}. ` +\n    'A captura anterior fica preservada.',\n  );\n}\n\n// Rede de segurança contra o erro nº 1 da integração: HTML que passou por JSON\n// chega com as aspas escapadas, nada casa, e o coletor reporta `sem_jsonld`\n// apontando para a loja em vez de para o transporte.\nconst amostra = html.slice(0, 100000);\nconst aspas = (amostra.match(/\"/g) || []).length;\nconst escapadas = (amostra.match(/\\\\\"/g) || []).length;\nif (aspas > 0 && escapadas / aspas >= 0.5) {\n  throw new Error(\n    `${loja}: HTML com aspas ESCAPADAS (${escapadas}/${aspas}). ` +\n    'Passou por JSON.stringify. Confira responseFormat=text no nó de busca.',\n  );\n}\n\nconst manterScripts = PRECISA_DOS_SCRIPTS.some(\n  (d) => host === d || host.endsWith('.' + d),\n);\n\nlet enxuto = html\n  .replace(/<style\\b[^>]*>[\\s\\S]*?<\\/style>/gi, '')\n  .replace(/<!--[\\s\\S]*?-->/g, '')\n  .replace(/<svg\\b[^>]*>[\\s\\S]*?<\\/svg>/gi, '')\n  .replace(/<noscript\\b[^>]*>[\\s\\S]*?<\\/noscript>/gi, '');\n\nif (!manterScripts) {\n  // ld+json sempre fica: é onde três das quatro lojas publicam o preço.\n  enxuto = enxuto.replace(\n    /<script\\b[^>]*>[\\s\\S]*?<\\/script>/gi,\n    (bloco) => (/ld\\+json/i.test(bloco.slice(0, 120)) ? bloco : ''),\n  );\n}\n\nenxuto = enxuto.replace(/[ \\t]{2,}/g, ' ').replace(/\\n{2,}/g, '\\n');\n\n// Bytes UTF-8 sem Buffer nem TextEncoder: encodeURIComponent vira cada byte\n// não-ASCII em %XX, e trocar cada %XX por um caractere iguala comprimento a\n// contagem de bytes.\nconst bytes = (s) => encodeURIComponent(s).replace(/%[0-9A-F]{2}/gi, 'x').length;\nconst bytesEnxuto = bytes(enxuto);\n\nif (bytesEnxuto > TETO_FIRESTORE) {\n  throw new Error(\n    `${loja}: ${Math.round(bytesEnxuto / 1024)} KB depois de enxugar, ainda acima ` +\n    `do teto de 1 MiB. Página cresceu; considere cortar mais ou usar Cloud Storage.`,\n  );\n}\n\nreturn [{\n  json: {\n    fonteId,\n    loja,\n    kbOriginal: Math.round(bytes(html) / 1024),\n    kbNoDocumento: Math.round(bytesEnxuto / 1024),\n    manterScripts,\n    corpo: {\n      fields: {\n        url: { stringValue: url },\n        html: { stringValue: enxuto },\n        codificacao: { stringValue: 'texto' },\n        bytes: { integerValue: String(bytesEnxuto) },\n        capturadoEm: { timestampValue: new Date().toISOString() },\n      },\n    },\n  },\n}];"
       },
       "id": "17303a7f-f88a-4d64-abb9-dba39288e9a9",
       "name": "Comprimir",
@@ -145,7 +146,7 @@
         -80
       ],
       "onError": "continueRegularOutput",
-      "notes": "Enxuga o HTML até caber no documento do Firestore (1 MiB). Sem require nem CompressionStream — o sandbox deste n8n recusa os dois.\n\nO corte de <script> é o que dá folga, e o ld+json é sempre preservado. A Pichau é exceção: o preço à vista dela vive num <script> comum e some se cortar."
+      "notes": "Enxuga o HTML até caber no documento do Firestore (1 MiB). Sem require nem CompressionStream — o sandbox deste n8n recusa os dois.\n\nO corte de <script> é o que dá folga, e o ld+json é sempre preservado. A Pichau é exceção: o preço à vista dela vive num <script> comum e some se cortar.\n\nRecusa captura que não é página de produto: piso de 20 KB e marcas de bloqueio. Lançar erro aqui é DE PROPÓSITO — com onError=continueRegularOutput o item segue, o nó de gravação falha por não ter `corpo`, nada é escrito, e o laço continua para a próxima fonte. Devolver [] pararia o laço, porque é o nó de gravação que realimenta o splitInBatches."
     },
     {
       "parameters": {
@@ -242,17 +243,6 @@
         ]
       ]
     },
-    "A cada 3 horas": {
-      "main": [
-        [
-          {
-            "node": "Listar fontes ativas1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Escolher o que capturar": {
       "main": [
         [
@@ -320,6 +310,17 @@
         [
           {
             "node": "Uma fonte por vez",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "A cada 3 horas": {
+      "main": [
+        [
+          {
+            "node": "Listar fontes ativas1",
             "type": "main",
             "index": 0
           }
