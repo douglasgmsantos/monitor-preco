@@ -34,7 +34,16 @@ export const LOJAS = [
  *  "monta a página por JavaScript" ensina algo; ler "a URL não é de KaBuM" não.
  */
 export const DOMINIOS_INCOMPATIVEIS = [
-  { padrao: /(^|\.)mercadolivre\.com\.br$/, motivo: "o Mercado Livre monta a página por JavaScript, e a API oficial não devolve preço para apps sem permissão especial" },
+  // MERCADO LIVRE SAIU DAQUI em 2026-08-15, quando entrou em LOJAS.
+  //
+  // O motivo antigo dizia "monta a página por JavaScript", e isso estava
+  // ERRADO: o HTML servido traz `ld+json` com Product e price (medido no
+  // template — 5549.9 BRL, InStock). O que existe é bloqueio anti-bot por IP,
+  // que redireciona o fetch direto para /gz/account-verification. Coisa
+  // diferente, e resolvida pelo caminho de captura do n8n.
+  //
+  // A outra metade ("a API oficial não devolve preço") continua verdadeira,
+  // mas virou irrelevante: não usamos a API.
   { padrao: /(^|\.)magazineluiza\.com\.br$/, motivo: "o Magazine Luiza bloqueia requisições automatizadas (HTTP 403)" },
   { padrao: /(^|\.)magalu\.com\.br$/, motivo: "o Magalu bloqueia requisições automatizadas (HTTP 403)" },
   { padrao: /(^|\.)americanas\.com\.br$/, motivo: "a Americanas monta a página por JavaScript; o HTML não traz preço nem produto" },
