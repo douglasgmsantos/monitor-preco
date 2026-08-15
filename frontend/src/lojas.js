@@ -22,6 +22,9 @@ export const LOJAS = [
   { nome: "Terabyte Shop", dominios: ["terabyteshop.com.br"] },
   { nome: "Pichau",        dominios: ["pichau.com.br"] },
   { nome: "Amazon",        dominios: ["amazon.com.br"] },
+  // Entrou em 2026-08-15. Só pelo caminho de captura: busca direta é
+  // redirecionada para /gz/account-verification. Ver coletor/lojas.py.
+  { nome: "Mercado Livre", dominios: ["mercadolivre.com.br", "mercadolibre.com"] },
 ];
 
 /** Domínios confirmadamente incompatíveis, com o motivo verificado.

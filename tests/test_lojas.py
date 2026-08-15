@@ -32,7 +32,8 @@ from coletor.coleta import (
     LIMITE_FALHAS_SEGUIDAS, LimitadorPorHost, coletar_fonte, validar_fonte_pendente,
 )
 from coletor.lojas import (
-    CABECALHOS_DE_NAVEGADOR, LOJAS, Loja, cabecalhos_de, extrair_da_loja, loja_de,
+    CABECALHOS_DE_NAVEGADOR, LOJAS, Loja, busca_de, cabecalhos_de,
+    condicao_de_pagamento_de, extrair_da_loja, loja_de,
 )
 from coletor.parser import (
     ERRO_BLOQUEIO, ERRO_SEM_OFERTA, ERROS_DE_PARSE, SeletoresDeProduto,
@@ -106,9 +107,14 @@ def template(nome: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_lista_fechada_tem_as_quatro_lojas():
+def test_lista_fechada_tem_as_lojas_registradas():
+    """A lista é FECHADA e a ordem importa: é a que o cadastro exibe.
+
+    Mercado Livre entrou em 2026-08-15. A Shopee foi avaliada e ficou de fora —
+    ver `test_shopee_continua_fora_e_o_motivo_esta_medido`.
+    """
     assert [loja.nome for loja in LOJAS] == [
-        "KaBuM", "Terabyte Shop", "Pichau", "Amazon",
+        "KaBuM", "Terabyte Shop", "Pichau", "Mercado Livre", "Amazon",
     ]
 
 
@@ -590,3 +596,54 @@ async def test_cloudflare_no_terabyte_e_bloqueio_e_nao_erro_de_parse(limitador):
     # servido com 200 receberia o mesmo tratamento.
     assert resultado.erro not in ("sem_jsonld", "sem_product")
     assert repositorio.invalidas == []
+
+
+# --- Mercado Livre e Pichau, revalidados em 2026-08-15 -----------------------
+
+
+@pytest.mark.parametrize("url", [
+    "https://www.mercadolivre.com.br/placa/up/MLBU4321196857",
+    "https://mercadolivre.com.br/p/MLB123",
+    "https://produto.mercadolivre.com.br/MLB-123-placa",
+])
+def test_mercado_livre_e_reconhecido(url):
+    assert loja_de(url).nome == "Mercado Livre"
+
+
+def test_mercado_livre_exige_captura():
+    """Busca direta cai em /gz/account-verification: HTTP 200, 39 KB, zero
+    preço (medido em 2026-08-15). Marcar como `direta` faria o coletor gravar
+    falha a cada ciclo até condenar uma URL perfeita."""
+    assert busca_de("https://www.mercadolivre.com.br/p/MLB1") == "capturada"
+
+
+def test_mercado_livre_nao_promete_desconto_a_vista():
+    """Sem condição de pagamento, como a Amazon.
+
+    Medido no template: a página não menciona "à vista" nem "no Pix" em lugar
+    nenhum. Dizer "à vista no PIX" prometeria um desconto inexistente.
+    """
+    assert condicao_de_pagamento_de("https://www.mercadolivre.com.br/p/MLB1") == ""
+
+
+def test_pichau_le_do_estado_e_nao_do_jsonld():
+    """A Pichau parou de publicar ld+json de Product em 2026-08-15.
+
+    Antes ela era `jsonld` com override de à vista por cima; sem o Product, o
+    override nunca rodava e o parser devolvia `sem_product` — que é ERRO DE
+    PARSE e condenaria a fonte em 5 ciclos por uma mudança de layout da loja.
+    """
+    pichau = next(l for l in LOJAS if l.nome == "Pichau")
+    assert pichau.estrategia == "estado"
+
+
+def test_shopee_continua_fora_e_o_motivo_esta_medido():
+    """Medido em 2026-08-15 no template de 909 KB: os blocos ld+json são
+    `WebSite` e `BreadcrumbList` — nenhum Product —, o estado embutido traz
+    `"price": null, "price_min": null, "price_max": null`, e as 3 ocorrências
+    de "R$" são texto de cupom de frete. O número NÃO ESTÁ no documento: ler a
+    Shopee exigiria nó de navegador ou a API interna dela.
+
+    Este teste existe para a decisão não ser reinvestigada a cada trimestre.
+    """
+    assert loja_de("https://shopee.com.br/produto-i.123.456") is None

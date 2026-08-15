@@ -24,6 +24,14 @@ DUAS ESTRATÉGIAS DE EXTRAÇÃO
 `dom`     seletores de CSS na marra. Só quando não há JSON-LD, porque depende do
           layout e quebra sem aviso. Hoje: apenas Amazon.
 
+`estado`  o preço mora num JSON embutido num `<script>` comum, e a página NÃO
+          publica Product em ld+json. Hoje: apenas Pichau, que em 2026-08-15
+          parou de publicar o JSON-LD de produto — o bloco que restou é
+          `BreadcrumbList`. Antes ela era `jsonld` com um override de à vista
+          por cima; com o Product ausente, o override nunca rodava e o parser
+          devolvia `sem_product`, que é ERRO DE PARSE e condenaria a fonte em 5
+          ciclos por uma mudança de layout da loja.
+
 DE ONDE VEM O HTML (campo `busca`)
 ----------------------------------
 Medido em produção, 2026-08-13. O runner do GitHub é IP de datacenter e leva 403
@@ -43,9 +51,11 @@ import logging
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
+from selectolax.parser import HTMLParser
+
 from coletor.parser import (
     ERRO_BLOQUEIO, TETO_CENTAVOS, ResultadoExtracao, SeletoresDeProduto,
-    extrair_preco, extrair_preco_do_estado, extrair_preco_dom,
+    extrair_imagem, extrair_preco, extrair_preco_do_estado, extrair_preco_dom,
     parece_pagina_de_bloqueio,
 )
 
@@ -223,18 +233,45 @@ LOJAS: tuple[Loja, ...] = (
     Loja(
         nome="Pichau",
         dominios=("pichau.com.br",),
-        estrategia="jsonld",
+        estrategia="estado",
         busca="capturada",
-        # O JSON-LD dela dá o parcelado; o preço que interessa vem do estado.
+        # O preço à vista, no estado embutido. Medido em 2026-08-15: `avista`
+        # = 9805.81 contra `final_price` = 11536.25 (o parcelado).
         padrao_preco_avista=PADRAO_AVISTA_PICHAU,
         condicao_de_pagamento="à vista no PIX",
         observacao=(
-            "PROBLEMÁTICA. Única loja cujo JSON-LD não é o preço à vista (traz o "
-            "final_price; o à vista mora no estado embutido). E bloqueia de "
-            "TODO lugar: 403 do runner, e pelo n8n de rede residencial devolve "
-            "HTTP 200 com 'Site em Manutenção' e zero preço (2026-08-13). Ligada "
-            "em 'capturada' a pedido; enquanto ela recusar, acumula "
-            "pagina_de_bloqueio — que é transporte e não condena a fonte"
+            "MUDOU DE ESTRATÉGIA em 2026-08-15. Parou de publicar ld+json de "
+            "Product — sobrou só BreadcrumbList — e o parser passou a devolver "
+            "`sem_product`, que condenaria a fonte em 5 ciclos. Agora lê o "
+            "`avista` do estado embutido, com a imagem vindo de og:image. "
+            "DISPONIBILIDADE NÃO É OBSERVÁVEL nesta página: não há InStock, "
+            "stock_status nem equivalente, então 'tem preço' é o melhor sinal "
+            "disponível — e o alerta de volta ao estoque não funciona para ela. "
+            "Continua bloqueando muito: 403 do runner e 'Site em Manutenção' "
+            "pelo n8n em 2026-08-13"
+        ),
+    ),
+    Loja(
+        nome="Mercado Livre",
+        dominios=("mercadolivre.com.br", "mercadolibre.com"),
+        estrategia="jsonld",
+        busca="capturada",
+        # SEM condição de pagamento, pelo mesmo motivo da Amazon: medido no
+        # template de 2026-08-15, a página não menciona "à vista" nem "no Pix"
+        # em lugar nenhum. O 5549.9 do JSON-LD é o preço normal. Afirmar "à
+        # vista no PIX" prometeria um desconto que não existe.
+        condicao_de_pagamento="",
+        observacao=(
+            "JSON-LD com Product completo, medido no template de 2026-08-15: "
+            "price 5549.9 BRL, availability InStock, sku MLBU4321196857. "
+            "OBRIGATORIAMENTE capturada: busca direta é redirecionada para "
+            "/gz/account-verification (HTTP 200, 39 KB, zero preço) — testado "
+            "em 2026-08-15. A conclusão anterior desta sessão, de que o ML era "
+            "inviável, era sobre a API (que retém o preço) e sobre o fetch "
+            "direto; o caminho de captura ainda não existia quando ela foi "
+            "tirada. FALTA CONFIRMAR com uma captura real do n8n: o template "
+            "pode ter vindo de 'salvar página' do navegador, e só uma execução "
+            "prova que o n8n recebe o mesmo ld+json"
         ),
     ),
     Loja(
@@ -319,6 +356,12 @@ def extrair_da_loja(
     if parece_pagina_de_bloqueio(html):
         return ResultadoExtracao(None, None, False, None, ERRO_BLOQUEIO)
 
+    if loja is not None and loja.estrategia == "estado":
+        # Não passa por JSON-LD: nesta loja ele não existe mais. Tentar primeiro
+        # e depois "corrigir" produziria `sem_product`, que é erro de PARSE e
+        # condena a fonte por uma mudança de layout da loja.
+        return _do_estado_embutido(html, loja, teto_centavos)
+
     if loja is not None and loja.estrategia == "dom":
         resultado = extrair_preco_dom(
             html, loja.seletores, teto_centavos=teto_centavos
@@ -329,6 +372,42 @@ def extrair_da_loja(
     if loja is not None and loja.padrao_preco_avista:
         resultado = _com_preco_avista(resultado, html, loja, teto_centavos)
     return resultado
+
+
+def _do_estado_embutido(
+    html: str, loja: Loja, teto_centavos: int
+) -> ResultadoExtracao:
+    """Preço do JSON embutido, sem depender de JSON-LD.
+
+    DISPONIBILIDADE: a página da Pichau não publica nenhum sinal legível
+    (`InStock`, `stock_status`, `is_salable` — medido, nenhum existe). Ter preço
+    à vista é o melhor indício disponível, então `disponivel` acompanha o preço.
+
+    A consequência é honesta e precisa estar registrada: o alerta de VOLTA AO
+    ESTOQUE não funciona para esta loja. Ela nunca reporta `esgotado`; quando o
+    produto some, o preço some junto e vira `sem_preco_avista`, que é erro de
+    parse. Preferir isso a inventar um `disponivel=False` que ninguém observou.
+    """
+    centavos = extrair_preco_do_estado(
+        html, loja.padrao_preco_avista, teto_centavos=teto_centavos
+    )
+    if centavos is None:
+        logger.warning(
+            "%s: preço à vista ausente no estado da página (estratégia estado)",
+            loja.nome,
+        )
+        return ResultadoExtracao(None, None, False, None, "sem_preco_avista")
+
+    return ResultadoExtracao(
+        preco_centavos=centavos,
+        moeda="BRL",
+        disponivel=True,
+        origem="e",
+        erro=None,
+        # `extrair_imagem` recebe a ÁRVORE, não o texto: aqui não passamos por
+        # `extrair_preco`, que é quem normalmente faz o parse.
+        imagem=extrair_imagem(HTMLParser(html)),
+    )
 
 
 def _com_preco_avista(
