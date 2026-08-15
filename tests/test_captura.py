@@ -267,13 +267,11 @@ def _nome_do_no_por_tipo(sufixo: str) -> str:
     return achados[0]["name"]
 
 
-def test_workflow_avisa_o_actions_uma_vez_so():
-    """O disparo pende da saída `done` do loop, não da saída por item.
+def test_disparo_pende_da_saida_done_e_nao_da_do_laco():
+    """A saída 1 do splitInBatches roda DURANTE a captura, uma vez por fonte.
 
-    A saída 1 do splitInBatches roda UMA VEZ POR FONTE. Ligar o disparo ali
-    renderia 9 chamadas por captura — e como o workflow do coletor usa
-    `concurrency: coletor` com `cancel-in-progress: false`, as outras 8 ficariam
-    enfileiradas rodando ciclos idênticos. A saída 0 emite uma vez, no fim.
+    Disparar ali chamaria a coleta antes de as páginas existirem. A saída 0
+    emite depois da última fonte.
     """
     laco = _fluxo()["connections"][_nome_do_no_por_tipo("splitInBatches")]["main"]
     destinos_done = {s["node"] for s in (laco[0] or [])}
@@ -281,6 +279,25 @@ def test_workflow_avisa_o_actions_uma_vez_so():
 
     assert "Avisar o GitHub Actions" in destinos_done
     assert "Avisar o GitHub Actions" not in destinos_loop
+
+
+@pytest.mark.skipif(WORKFLOW is None, reason="workflow do n8n ausente")
+def test_disparo_executa_uma_vez_e_nao_uma_por_fonte():
+    """`executeOnce` — e estar na saída certa NÃO substitui isto.
+
+    Um nó de HTTP Request no n8n roda UMA VEZ POR ITEM de entrada, e a saída
+    `done` do splitInBatches emite todos os itens acumulados do laço: um por
+    fonte. Em 2026-08-15 uma execução da captura gerou 8 `workflow_dispatch`
+    (runs #113 a #120); o `concurrency` do Actions cancelou 6 em 1-3s e dois
+    rodaram de verdade.
+
+    Alcançado uma vez ≠ executado uma vez. O teste anterior cobre a primeira
+    metade; esta é a segunda.
+    """
+    no = _no("Avisar o GitHub Actions")
+    assert no.get("executeOnce") is True, (
+        "sem executeOnce, o disparo sai uma vez POR FONTE capturada"
+    )
 
 
 @pytest.mark.skipif(WORKFLOW is None, reason="workflow do n8n ausente")

@@ -440,10 +440,14 @@ O nó **`Avisar o GitHub Actions`** faz `POST` em
 
 Três decisões que valem entender:
 
-- **Pende da saída `done` do loop, não da saída por item.** A saída por item roda
-  uma vez por fonte: 9 fontes seriam 9 disparos, e como o coletor usa
-  `concurrency: coletor` com `cancel-in-progress: false`, oito execuções
-  idênticas ficariam enfileiradas. A `done` emite uma vez, depois da última.
+- **Pende da saída `done` do loop, e tem `executeOnce`.** São duas coisas
+  diferentes, e a segunda custou caro para aprender. A saída `done` garante que
+  o nó é *alcançado* uma vez, depois da última fonte — a saída por item
+  dispararia a coleta antes de as páginas existirem. Mas um nó de HTTP Request
+  no n8n roda **uma vez por item de entrada**, e a `done` emite todos os itens
+  acumulados do laço: um por fonte. Sem `executeOnce`, uma captura gerou **8
+  disparos** (runs #113–#120 em 2026-08-15). O `concurrency: coletor` cancelou 6
+  em 1–3s e dois rodaram — contenção, não conserto.
 - **O corpo não manda `inputs`.** O input `forcar` é do tipo `boolean`, e mandar
   `"true"` (string) pela API do GitHub esbarra na validação de tipo. Omitir faz
   valer o `default: true` do workflow — que é exatamente o que se quer. Um teste
