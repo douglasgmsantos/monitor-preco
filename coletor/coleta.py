@@ -20,7 +20,7 @@ import httpx
 
 from coletor import captura
 from coletor.lojas import busca_de, cabecalhos_de, extrair_da_loja
-from coletor.parser import ERROS_DE_PARSE, ResultadoExtracao
+from coletor.parser import ERRO_SEM_OFERTA, ERROS_DE_PARSE, ResultadoExtracao
 
 logger = logging.getLogger(__name__)
 
@@ -308,6 +308,18 @@ def _tratar_falha(
     notificador: Notificador | None,
 ) -> None:
     """Contabiliza a falha e desliga a fonte na quinta seguida."""
+    # SEM OFERTA ATIVA NÃO É FALHA. A página foi lida e o produto identificado;
+    # o que faltou foi estoque, e estoque é do produto, não da URL. Sem esta
+    # saída, um produto esgotado por 5 ciclos (2h30) perdia a fonte para sempre
+    # — e perdia justamente antes de voltar, que é quando o aviso valeria.
+    #
+    # Custa uma escrita extra sobre as três que a seção 8.1 orça por coleta,
+    # porque `registrar_leitura` já incrementou o contador na transação e ele
+    # precisa voltar a zero. Só acontece com produto esgotado, que é raro.
+    if resultado.erro == ERRO_SEM_OFERTA:
+        repositorio.marcar_fonte_sem_oferta(fonte)
+        return
+
     # `registrar_leitura` já incrementou o contador no armazenamento; aqui
     # usamos o valor projetado para decidir o desligamento.
     falhas = fonte.falhas_seguidas + 1
@@ -394,7 +406,12 @@ async def validar_fonte_pendente(
 
     if resultado.preco_centavos is None:
         motivo = resultado.erro or "preco_invalido"
-        if motivo in ERROS_DE_PARSE:
+        if motivo == ERRO_SEM_OFERTA:
+            # A URL presta: a página abriu e o produto está lá. Promove a fonte
+            # em vez de contar tentativa, senão ela vira `invalida` na quinta e
+            # o cadastro de um produto temporariamente esgotado é recusado.
+            repositorio.marcar_fonte_sem_oferta(fonte)
+        elif motivo in ERROS_DE_PARSE:
             # A página é ilegível: insistir não muda nada.
             repositorio.marcar_fonte_invalida(fonte, motivo)
         else:

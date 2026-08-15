@@ -76,10 +76,49 @@ STATUS_INVALIDA = "invalida"
 
 DIAS_DA_MEDIA = 30
 
+# Janela da mínima histórica. 30 dias é o horizonte em que "menor preço" ainda
+# significa alguma coisa para quem compra: mais que isso pega promoção de outra
+# época, menos que isso pega ruído da semana.
+DIAS_DA_MINIMA = 30
+
+# Piso para AFIRMAR que é o menor preço. Com dois ou três dias de histórico,
+# "menor preço já visto" é quase sempre verdade e não informa nada — o produto
+# entrou ontem. Abaixo disto a tela mostra a mínima, mas não chama de recorde.
+DIAS_PARA_AFIRMAR_MINIMA = 7
+
 
 # ----------------------------------------------------------------------------
 # Modelos
 # ----------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class MinimaHistorica:
+    """Menor preço da janela, com o quanto de história sustenta a afirmação."""
+
+    centavos: int | None
+    dias_observados: int
+    dias_da_janela: int = DIAS_DA_MINIMA
+
+    @property
+    def confiavel(self) -> bool:
+        """Há história suficiente para CHAMAR de menor preço.
+
+        Com 2 dias de dados quase todo preço é "o menor já visto", e dizer isso
+        treina o usuário a ignorar a frase — que é o pior desfecho possível para
+        um sinal cuja função é justificar uma compra.
+        """
+        return (
+            self.centavos is not None
+            and self.dias_observados >= DIAS_PARA_AFIRMAR_MINIMA
+        )
+
+    def e_o_menor(self, preco_centavos: int | None) -> bool:
+        return (
+            self.confiavel
+            and preco_centavos is not None
+            and preco_centavos <= self.centavos
+        )
 
 
 @dataclass
@@ -116,6 +155,9 @@ class Produto:
     # faz o alerta PAUSAR depois de repetir demais o mesmo preço — ver
     # `LIMITE_DE_REPETICOES` em coletor/alertas.py.
     repeticoes_no_mesmo_preco: int = 0
+    # A última leitura CONCLUSIVA disse que o produto acabou. Só entra aqui
+    # quando a loja informou; falha de leitura não conta (ver `esgotada`).
+    sem_estoque: bool = False
 
 
 # ----------------------------------------------------------------------------
@@ -337,6 +379,38 @@ class Repositorio:
             }
         )
 
+    def marcar_fonte_sem_oferta(self, fonte: Fonte) -> None:
+        """Página lida, produto identificado, sem oferta ativa: fonte VÁLIDA.
+
+        "Sem estoque" é estado do PRODUTO, não defeito da URL — e tratá-lo como
+        falha matava a fonte de duas maneiras: na validação virava `invalida` na
+        5ª tentativa, e na coleta virava `comErro` na 5ª leitura. Cinco ciclos
+        são 2h30; qualquer produto esgotado por meio expediente perdia a fonte
+        para sempre, com direito a "⚠️ Fonte desativada" no Telegram.
+
+        Pior: era a fonte morrendo justamente antes de o produto voltar, que é
+        quando o alerta de volta ao estoque teria valor.
+
+        `status: ok` é o que mantém a fonte no ciclo de coleta — sem isso ela
+        sai de `listar_fontes_ativas` e a volta nunca é observada.
+
+        O preço é ZERADO de propósito. Manter o último preço conhecido faria o
+        cartão exibir, e `menorPrecoAtual` considerar, um valor que não está à
+        venda — o produto pareceria mais barato do que dá para comprar.
+        """
+        fonte.ref.update(
+            {
+                "status": STATUS_OK,
+                "comErro": False,
+                "falhasSeguidas": 0,
+                # Guardado com status `ok` de propósito: é o que a tela lê para
+                # mostrar "Esgotado" em vez de "Indisponível", que não diz nada.
+                "motivoInvalida": "sem_oferta_ativa",
+                "ultimoPrecoCentavos": None,
+                "ultimaColetaEm": firestore.SERVER_TIMESTAMP,
+            }
+        )
+
     def registrar_tentativa_de_validacao(self, fonte: Fonte, motivo: str) -> None:
         """Falha de transporte na validação: conta a tentativa e segue pendente.
 
@@ -455,6 +529,7 @@ class Repositorio:
             # Ausente em produto anterior ao campo: 0 significa "nenhuma
             # repetição gasta", que é o começo certo para quem nunca contou.
             repeticoes_no_mesmo_preco=int(dados.get("repeticoesNoMesmoPreco") or 0),
+            sem_estoque=bool(dados.get("semEstoque", False)),
         )
 
     def atualizar_estado_alerta(
@@ -464,6 +539,7 @@ class Repositorio:
         preco_centavos: int | None,
         alertado_em: datetime | None,
         repeticoes_no_mesmo_preco: int = 0,
+        sem_estoque: bool = False,
     ) -> None:
         """Grava estado e, quando houve notificação, os campos do alerta.
 
@@ -474,6 +550,7 @@ class Repositorio:
         atualizacao: dict[str, Any] = {
             "estado": estado,
             "repeticoesNoMesmoPreco": repeticoes_no_mesmo_preco,
+            "semEstoque": sem_estoque,
         }
         if alertado_em is not None:
             atualizacao["ultimoAlertaEm"] = alertado_em
@@ -748,4 +825,51 @@ class Repositorio:
         if len(dias) < DIAS_DA_MEDIA or n_total <= 0:
             return None
         return soma_total // n_total
+
+    def minima_historica(
+        self, produto: Produto, agora: datetime | None = None,
+        dias_da_janela: int = DIAS_DA_MINIMA,
+    ) -> "MinimaHistorica":
+        """O menor preço visto na janela, e há quantos dias se observa.
+
+        Responde a pergunta que o `valorMaxCentavos` não responde: o máximo é um
+        número que o usuário chutou; a mínima é fato medido. "R$ 4.899 (limite
+        R$ 6.000)" não diz se é uma boa compra; "R$ 4.899, menor preço em 30
+        dias" diz.
+
+        Lê o rollup `diario`, que já guarda `min` por dia e fonte — o campo
+        existia desde a fase 2 e nada consumia. Custo: os mesmos documentos que
+        a média já varre, um por fonte por ano.
+
+        DEVOLVE `dias_observados` JUNTO COM O VALOR, de propósito. Sem isso a
+        tela não tem como distinguir "menor preço em 30 dias" de "menor preço
+        nos 2 dias em que existe histórico" — e a segunda frase, dita como se
+        fosse a primeira, é propaganda enganosa contra o próprio usuário.
+        """
+        agora = agora or datetime.now(timezone.utc)
+        corte = agora - timedelta(days=dias_da_janela)
+        # A chave do dia é "dAAAAMMDD" e o ano vive no documento; comparar as
+        # strings montadas é mais barato e mais seguro que reconstruir datas.
+        chave_corte = chave_dia(corte)
+
+        minimo: int | None = None
+        dias: set[str] = set()
+
+        for snapshot in produto.ref.collection(COLECAO_DIARIO).stream():
+            dados = snapshot.to_dict() or {}
+            for chave, valores in (dados.get("dias") or {}).items():
+                if chave < chave_corte:
+                    continue
+                if (valores.get("n") or 0) <= 0:
+                    continue
+                dias.add(chave)
+                preco = valores.get("min")
+                if isinstance(preco, int) and (minimo is None or preco < minimo):
+                    minimo = preco
+
+        return MinimaHistorica(
+            centavos=minimo,
+            dias_observados=len(dias),
+            dias_da_janela=dias_da_janela,
+        )
 

@@ -8,6 +8,7 @@ import {
 } from "../composables/useProdutos.js";
 import { useCatalogo } from "../composables/useCatalogo.js";
 import { resumo30d } from "../composables/useHistorico.js";
+import { selo } from "../minima.js";
 import SeloProduto from "./SeloProduto.vue";
 
 const props = defineProps({
@@ -53,6 +54,8 @@ watch(
 
 const variacao = computed(() =>
   variacaoPct(atual.value, resumo.value ? resumo.value.media : null));
+
+const aviso = computed(() => selo(atual.value, resumo.value));
 
 // ---------------------------------------------------------------------------
 // Menu de ações
@@ -163,10 +166,18 @@ async function excluir() {
       </div>
       <div class="estat">
         <span class="rotulo">Menor preço</span>
-        <span class="valor mono menor">{{ formatarBRL(resumo && resumo.menor) }}</span>
-        <span v-if="resumo && resumo.menor !== null" class="sub">em 30 dias</span>
+        <span class="valor mono menor">{{ formatarBRL(resumo && resumo.minimo) }}</span>
+        <span v-if="resumo && resumo.minimo !== null" class="sub">em 30 dias</span>
       </div>
     </div>
+
+    <!-- Responde "é barato?", que o valor máximo não responde: o máximo é um
+         número chutado, a mínima é fato medido. Some quando não há o que
+         afirmar — selo "não é o menor preço" em todo cartão seria só ruído. -->
+    <p v-if="aviso" class="minima" :class="aviso.tipo" :title="aviso.detalhe">
+      <span v-if="aviso.tipo === 'recorde'" aria-hidden="true">📉</span>
+      {{ aviso.texto }}
+    </p>
 
     <footer class="faixa">
       <span class="situacao">
@@ -278,5 +289,18 @@ async function excluir() {
   .thumb { width: 64px; height: 64px; font-size: 24px; }
   .nome { font-size: 17px; }
   .destaque-atual .valor { font-size: 26px; }
+}
+
+/* O selo da mínima: recorde em verde, "acima da mínima" apagado.
+   Dois pesos diferentes porque as duas frases não valem a mesma coisa — uma
+   justifica comprar agora, a outra é só contexto. */
+.minima {
+  margin: 10px 0 0;
+  font-size: 12px; font-weight: 650;
+  display: flex; align-items: center; gap: 5px;
+}
+.minima.recorde { color: var(--bom); }
+.minima.acima, .minima.raso {
+  color: var(--tinta-fraca); font-weight: 500;
 }
 </style>

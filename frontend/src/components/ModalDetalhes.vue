@@ -13,6 +13,7 @@ import { useAuth } from "../composables/useAuth.js";
 import {
   fonteMaisBarata, menorPrecoAtual, ultimaVerificacao, useProdutos,
 } from "../composables/useProdutos.js";
+import { selo } from "../minima.js";
 import {
   PERIODOS, PERIODO_PADRAO, resumo30d, serieDoPeriodo,
 } from "../composables/useHistorico.js";
@@ -30,6 +31,8 @@ const { retentarFonte, apagarFonteComHistorico } = useProdutos();
 
 const resumo = ref(null);        // série do período escolhido
 const media30d = ref(null);      // SEMPRE 30 dias — é a referência do alerta
+const minima30d = ref(null);     // idem: o selo é sobre 30 dias, não sobre
+                                 // o período que o usuário está olhando
 const periodo = ref(PERIODO_PADRAO);
 const carregando = ref(false);
 const comoTabela = ref(false);
@@ -37,6 +40,12 @@ const comoTabela = ref(false);
 const atual = computed(() => menorPrecoAtual(props.produto));
 const verificado = computed(() => haQuantoTempo(ultimaVerificacao(props.produto)));
 const variacao = computed(() => variacaoPct(atual.value, media30d.value));
+
+// O selo é sempre sobre 30 dias, mesmo com o gráfico em "dia" ou "anual":
+// "menor preço em 24 horas" não ajuda a decidir uma compra, e mudar a
+// afirmação conforme o período faria o mesmo produto parecer recorde ou não
+// dependendo do botão apertado.
+const aviso = computed(() => selo(atual.value, minima30d.value));
 const idMaisBarata = computed(() => fonteMaisBarata(props.produto));
 
 /** Fontes com a mais barata no topo. Ela é a resposta que o usuário veio
@@ -60,6 +69,7 @@ async function carregar() {
   if (!usuario.value || !props.produto.fontes.length) {
     resumo.value = null;
     media30d.value = null;
+    minima30d.value = null;
     return;
   }
   carregando.value = true;
@@ -74,6 +84,7 @@ async function carregar() {
     if (pedido !== periodo.value) return;
     resumo.value = serie;
     media30d.value = mensal.media;
+    minima30d.value = mensal;
   } catch (erro) {
     console.error("falha ao carregar a flutuação", erro);
   } finally {
@@ -138,7 +149,25 @@ onUnmounted(() => document.removeEventListener("keydown", aoTeclar));
           <span class="rotulo">Média 30 dias</span>
           <span class="valor mono">{{ formatarBRL(media30d) }}</span>
         </div>
+        <div class="estat">
+          <span class="rotulo">Menor preço</span>
+          <span class="valor mono menor">
+            {{ formatarBRL(minima30d && minima30d.minimo) }}
+          </span>
+          <span v-if="minima30d && minima30d.diasObservados" class="sub">
+            em {{ minima30d.diasObservados }} dia(s) observados
+          </span>
+        </div>
       </div>
+
+      <!-- A leitura que decide a compra. Fica logo abaixo dos números porque é
+           a conclusão deles: "R$ 4.899 (máximo R$ 6.000)" não diz se compensa;
+           "menor preço em 30 dias" diz. -->
+      <p v-if="aviso" class="minima" :class="aviso.tipo">
+        <span v-if="aviso.tipo === 'recorde'" aria-hidden="true">📉</span>
+        <strong>{{ aviso.texto }}</strong>
+        <span class="detalhe">{{ aviso.detalhe }}</span>
+      </p>
 
       <!-- Fontes -->
       <section class="bloco">
@@ -315,4 +344,16 @@ onUnmounted(() => document.removeEventListener("keydown", aoTeclar));
   .janela { padding: 22px 18px; }
   .estatisticas { grid-template-columns: 1fr; }
 }
+
+/* Recorde em verde e negrito; "acima da mínima" apagado. As duas frases não
+   valem a mesma coisa: uma justifica comprar agora, a outra é só contexto. */
+.minima {
+  margin: 0 0 4px; padding: 10px 14px;
+  border-radius: 12px; background: var(--suave);
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  font-size: 13px;
+}
+.minima.recorde { color: var(--bom); }
+.minima .detalhe { color: var(--tinta-fraca); font-size: 12px; }
+.valor.menor { font-style: italic; }
 </style>

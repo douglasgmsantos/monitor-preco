@@ -15,6 +15,7 @@ from coletor.alertas import (
     processar,
 )
 from coletor.notificador import NotificadorMemoria
+from coletor.repositorio import MinimaHistorica
 
 AGORA = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
 
@@ -35,6 +36,7 @@ class ProdutoFalso:
     ultimo_preco_alertado_centavos: int | None = None
     ativo: bool = True
     repeticoes_no_mesmo_preco: int = 0
+    sem_estoque: bool = False
 
 
 @dataclass
@@ -45,6 +47,7 @@ class LeituraFalsa:
     disponivel: bool = True
     suspeito: bool = False
     imagem: str | None = None
+    erro: str | None = None
 
 
 @dataclass
@@ -54,11 +57,13 @@ class RepositorioFalso:
     estados: list = field(default_factory=list)
     notificacoes: list = field(default_factory=list)
     repeticoes: list = field(default_factory=list)
+    estoques: list = field(default_factory=list)
 
     def atualizar_estado_alerta(self, produto, estado, preco_centavos, alertado_em,
-                                repeticoes_no_mesmo_preco=0):
+                                repeticoes_no_mesmo_preco=0, sem_estoque=False):
         self.estados.append((produto.id, estado, preco_centavos, alertado_em))
         self.repeticoes.append(repeticoes_no_mesmo_preco)
+        self.estoques.append(sem_estoque)
 
     def media_historica_centavos(self, produto):
         return self.media_hist
@@ -697,3 +702,221 @@ def test_envio_que_falha_deixa_o_proximo_ciclo_tentar_de_novo():
     assert decisao.notificar is True
     assert len(notificador.mensagens) == 1
     assert len(repositorio.notificacoes) == 1
+
+
+# --- menor preço histórico ---------------------------------------------------
+#
+# O que estes testes protegem não é o cálculo do mínimo — é a HONESTIDADE da
+# afirmação. Dizer "menor preço em 30 dias" com dois dias de histórico é quase
+# sempre tecnicamente verdade e sempre inútil: o produto acabou de entrar. Se a
+# frase aparecer em toda mensagem, o usuário aprende a ignorá-la, e aí o sinal
+# que deveria justificar uma compra vale zero.
+
+
+def _minima(centavos, dias_observados, janela=30):
+    return MinimaHistorica(centavos=centavos, dias_observados=dias_observados,
+                           dias_da_janela=janela)
+
+
+def test_mensagem_anuncia_recorde_quando_ha_historia_suficiente():
+    produto = ProdutoFalso()
+    leitura = LeituraFalsa(preco_centavos=100_000)
+
+    texto = montar_mensagem(produto, leitura, _minima(100_000, dias_observados=30))
+
+    assert "📉 Menor preço em 30 dias" in texto
+
+
+def test_mensagem_cala_o_recorde_com_historico_raso():
+    """Dois dias de dados não sustentam a frase, mesmo sendo o menor valor."""
+    produto = ProdutoFalso()
+    leitura = LeituraFalsa(preco_centavos=100_000)
+
+    texto = montar_mensagem(produto, leitura, _minima(100_000, dias_observados=2))
+
+    assert "Menor preço" not in texto
+
+
+def test_mensagem_cala_o_recorde_quando_nao_e_recorde():
+    """Preço acima da mínima não vira "menor preço" — e a linha some inteira em
+    vez de virar "não é o menor", que gastaria atenção sem informar."""
+    produto = ProdutoFalso()
+    leitura = LeituraFalsa(preco_centavos=120_000)
+
+    texto = montar_mensagem(produto, leitura, _minima(100_000, dias_observados=30))
+
+    assert "Menor preço" not in texto
+
+
+def test_empatar_com_a_minima_conta_como_recorde():
+    """`<=`, não `<`: o preço que empata com a mínima É o menor preço visto, e
+    exigir superar por um centavo esconderia justamente a melhor oferta."""
+    minima = _minima(100_000, dias_observados=30)
+    assert minima.e_o_menor(100_000) is True
+    assert minima.e_o_menor(100_001) is False
+
+
+def test_sem_minima_a_mensagem_sai_igual_a_de_antes():
+    """Compatibilidade: produto novo, sem rollup, ou falha na leitura."""
+    produto = ProdutoFalso()
+    leitura = LeituraFalsa(preco_centavos=100_000)
+
+    assert montar_mensagem(produto, leitura, None) == montar_mensagem(produto, leitura)
+    assert montar_mensagem(produto, leitura, _minima(None, 30)) == \
+        montar_mensagem(produto, leitura)
+
+
+def test_falha_ao_ler_a_minima_nao_engole_o_alerta():
+    """Recorde é enfeite; alerta é o essencial.
+
+    Se a varredura do rollup explodir, a mensagem tem de sair mesmo assim — sem
+    a linha. O contrário trocaria uma oferta perdida por um enfeite.
+    """
+    class RepositorioQueExplode(RepositorioFalso):
+        def minima_historica(self, produto, *args, **kwargs):
+            raise RuntimeError("Firestore fora do ar")
+
+    produto = ProdutoFalso()
+    notificador = NotificadorMemoria()
+
+    decisao = processar(produto, [LeituraFalsa(preco_centavos=105_000)], AGORA,
+                        RepositorioQueExplode(), notificador)
+
+    assert decisao.notificar is True
+    assert len(notificador.mensagens) == 1
+    assert "Menor preço" not in notificador.mensagens[0]
+
+
+# --- volta ao estoque --------------------------------------------------------
+#
+# A regra é simples; o perigo está em CONFUNDIR "acabou" com "não consegui ler".
+# Se falha de leitura contasse como esgotado, um n8n fora do ar marcaria todos
+# os produtos de uma vez — e na recuperação todos disparariam "voltou ao
+# estoque" juntos. Enxurrada de alerta falso no pior momento possível.
+
+from coletor.alertas import esgotada
+from coletor.parser import ERRO_BLOQUEIO, ERRO_SEM_OFERTA
+
+
+def test_sem_oferta_ativa_marca_esgotado():
+    leitura = LeituraFalsa(preco_centavos=None, disponivel=False,
+                           erro=ERRO_SEM_OFERTA)
+    assert esgotada(leitura) is True
+
+
+def test_indisponivel_lido_da_pagina_marca_esgotado():
+    assert esgotada(LeituraFalsa(preco_centavos=None, disponivel=False)) is True
+
+
+@pytest.mark.parametrize("erro", [ERRO_BLOQUEIO, "captura_vencida", "http_403",
+                                  "sem_captura", "sem_jsonld"])
+def test_falha_de_leitura_nao_e_esgotado(erro):
+    """O teste que impede a enxurrada.
+
+    Bloqueio, captura vencida, 403, n8n parado: em todos a URL está boa e o
+    produto pode estar à venda. Marcar `semEstoque` aqui seria afirmar algo que
+    ninguém observou — e cobrar o preço na recuperação.
+    """
+    leitura = LeituraFalsa(preco_centavos=None, disponivel=False, erro=erro)
+    assert esgotada(leitura) is False
+
+
+def test_leitura_com_preco_nunca_e_esgotado():
+    assert esgotada(LeituraFalsa(preco_centavos=100_000)) is False
+
+
+def test_produto_esgotado_entra_em_sem_estoque_sem_avisar():
+    """Acabar não é notícia acionável — não dá para comprar o que não tem."""
+    produto = ProdutoFalso()
+    decisao = avaliar(produto, [LeituraFalsa(preco_centavos=None, disponivel=False,
+                                             erro=ERRO_SEM_OFERTA)], AGORA)
+
+    assert decisao.notificar is False
+    assert decisao.motivo == "esgotou"
+    assert decisao.sem_estoque is True
+
+
+def test_falha_de_leitura_preserva_o_estoque_anterior():
+    """Ignorância não muda o que se sabia: nem marca, nem desmarca."""
+    for antes in (False, True):
+        produto = ProdutoFalso(sem_estoque=antes)
+        decisao = avaliar(produto, [LeituraFalsa(preco_centavos=None,
+                                                 erro=ERRO_BLOQUEIO)], AGORA)
+        assert decisao.motivo == "sem_leitura_valida"
+        assert decisao.sem_estoque is antes
+
+
+def test_voltar_ao_estoque_dentro_da_faixa_avisa():
+    produto = ProdutoFalso(sem_estoque=True, estado=ESTADO_ACIMA)
+    decisao = avaliar(produto, [LeituraFalsa(preco_centavos=105_000)], AGORA)
+
+    assert decisao.notificar is True
+    assert decisao.motivo == "voltou_ao_estoque"
+    assert decisao.voltou_ao_estoque is True
+    assert decisao.sem_estoque is False
+
+
+def test_voltar_caro_nao_avisa_mas_limpa_o_sem_estoque():
+    """Voltar acima do máximo não é oferta.
+
+    Avisar gastaria a atenção que o alerta de verdade vai precisar. Mas o
+    `semEstoque` precisa sair, senão a próxima queda dentro da faixa seria
+    anunciada como "voltou ao estoque" — e ele nunca saiu.
+    """
+    produto = ProdutoFalso(sem_estoque=True)
+    decisao = avaliar(produto, [LeituraFalsa(preco_centavos=GATILHO + 1)], AGORA)
+
+    assert decisao.notificar is False
+    assert decisao.motivo == "voltou_caro"
+    assert decisao.sem_estoque is False
+
+
+def test_volta_ao_estoque_ignora_a_pausa_por_repeticao():
+    """Sumir e voltar é notícia mesmo com as repetições daquele preço gastas.
+
+    Sem este atalho, um produto que esgotou no mesmo preço em que já tinha
+    alertado 3 vezes voltaria em silêncio — exatamente o caso em que o aviso
+    mais importa, porque item escasso some rápido.
+    """
+    produto = ProdutoFalso(
+        sem_estoque=True,
+        estado=ESTADO_EM_ALERTA,
+        ultimo_preco_alertado_centavos=105_000,
+        repeticoes_no_mesmo_preco=LIMITE_DE_REPETICOES,
+        ultimo_alerta_em=AGORA - timedelta(minutes=5),   # e dentro do cooldown
+    )
+    decisao = avaliar(produto, [LeituraFalsa(preco_centavos=105_000)], AGORA)
+
+    assert decisao.notificar is True
+    assert decisao.motivo == "voltou_ao_estoque"
+
+
+def test_mensagem_de_volta_ao_estoque():
+    produto = ProdutoFalso()
+    leitura = LeituraFalsa(preco_centavos=100_000)
+
+    texto = montar_mensagem(produto, leitura, None, voltou_ao_estoque=True)
+
+    assert "🔄 Voltou ao estoque" in texto
+    # Antes do preço-recorde: quando as duas são verdade, a que decide é poder
+    # comprar. Menor preço de 30 dias não serve num produto indisponível.
+    com_minima = montar_mensagem(produto, leitura, MinimaHistorica(100_000, 30),
+                                 voltou_ao_estoque=True)
+    assert com_minima.index("Voltou ao estoque") < com_minima.index("Menor preço")
+
+
+def test_esgotar_grava_mesmo_sem_mudar_o_estado_do_alerta():
+    """`esgotou` mantém o estado (ACIMA continua ACIMA).
+
+    Se `processar` só gravasse quando o ESTADO muda, o `semEstoque` nunca seria
+    persistido — e a volta jamais seria detectada. O bug seria invisível: tudo
+    silencioso, nada no log.
+    """
+    produto = ProdutoFalso(estado=ESTADO_ACIMA, sem_estoque=False)
+    repositorio = RepositorioFalso()
+
+    processar(produto, [LeituraFalsa(preco_centavos=None, disponivel=False,
+                                     erro=ERRO_SEM_OFERTA)],
+              AGORA, repositorio, NotificadorMemoria())
+
+    assert repositorio.estoques == [True]

@@ -39,6 +39,10 @@ class LeituraDoCiclo:
     disponivel: bool
     suspeito: bool
     imagem: str | None = None
+    # Motivo da ausência de preço. `alertas.esgotada` usa isto para separar
+    # "a loja disse que acabou" de "não conseguimos ler" — sem ele, um n8n
+    # fora do ar viraria "esgotou" em todos os produtos de uma vez.
+    erro: str | None = None
 
 
 async def processar_pendentes(
@@ -126,6 +130,7 @@ def avaliar_alertas(
                     disponivel=item.resultado.disponivel,
                     suspeito=item.suspeito,
                     imagem=item.resultado.imagem,
+                    erro=item.resultado.erro,
                 )
                 for item in itens
             ]

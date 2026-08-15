@@ -19,6 +19,9 @@ from conftest import ler_fixture
 
 URL_A = "https://loja-a.example/produto/1"
 URL_B = "https://loja-b.example/produto/2"
+# Domínio real: `extrair_da_loja` escolhe a estratégia pelo host, e o
+# marcador `#unqualifiedBuyBox` que produz `sem_oferta_ativa` é da Amazon.
+URL_AMAZON = "https://www.amazon.com.br/produto/dp/B0TESTE123"
 LIMIAR = "0.70"
 TETO = 100_000_000
 UA = "MonitorPrecos/1.0 (uso pessoal)"
@@ -43,6 +46,7 @@ class RepositorioFalso:
     invalidas: list = field(default_factory=list)
     com_erro: list = field(default_factory=list)
     tentativas: list = field(default_factory=list)
+    sem_oferta: list = field(default_factory=list)
 
     def registrar_leitura(self, fonte, resultado, suspeito):
         self.leituras.append((fonte.id, resultado, suspeito))
@@ -58,6 +62,9 @@ class RepositorioFalso:
 
     def marcar_fonte_com_erro(self, fonte):
         self.com_erro.append(fonte.id)
+
+    def marcar_fonte_sem_oferta(self, fonte):
+        self.sem_oferta.append(fonte.id)
 
 
 @dataclass
@@ -472,3 +479,98 @@ async def test_buscar_html_devolve_erro_ou_html_nunca_os_dois(relogio):
             cliente, URL_A, user_agent=UA, dormir=relogio.dormir
         )
     assert erro is None and html == "<html>ok</html>"
+
+
+# --- sem oferta ativa NÃO condena a fonte ------------------------------------
+#
+# Descoberto em 2026-08-15 com duas fontes reais da Amazon paradas em 3 falhas
+# de 5. "Sem estoque" é estado do PRODUTO; a URL está perfeita. Contando como
+# falha, a fonte morria em 5 ciclos (2h30) — e morria justamente antes de o
+# produto voltar, que é quando o alerta de volta ao estoque teria valor.
+#
+# O teste passa pela CAPTURA porque só o caminho de DOM produz
+# `sem_oferta_ativa` (o marcador `#unqualifiedBuyBox`), e a Amazon é a única
+# loja de DOM — que busca por captura, não por HTTP direto.
+
+from datetime import datetime, timezone                            # noqa: E402
+from coletor import captura                                        # noqa: E402
+
+URL_AMAZON = "https://www.amazon.com.br/produto/dp/B0TESTE123"
+
+PAGINA_SEM_OFERTA = """
+<html><head></head><body>
+  <div id="unqualifiedBuyBox">Atualmente indisponível.</div>
+  <span id="productTitle">Placa de vídeo</span>
+</body></html>
+"""
+
+
+async def _nao_dormir(_segundos):
+    """Sem espera real: o limitador dorme 2s entre requisições ao mesmo host."""
+
+
+def _repo_com_captura(**extras):
+    """Repositório falso que entrega a captura da Amazon como o n8n entregaria."""
+    repositorio = RepositorioFalso(**extras)
+    documento = captura.documento(PAGINA_SEM_OFERTA, URL_AMAZON,
+                                  agora=datetime.now(timezone.utc))
+    repositorio.ler_pagina_capturada = lambda _fonte_id: documento
+    return repositorio
+
+
+@pytest.mark.asyncio
+async def test_coleta_de_produto_esgotado_nao_conta_falha():
+    """Caminho da COLETA: fonte já `ok` que fica sem estoque."""
+    fonte = FonteFalsa(url=URL_AMAZON, falhas_seguidas=4)   # a próxima mataria
+    repositorio = _repo_com_captura()
+    notificador = NotificadorFalso()
+
+    async with httpx.AsyncClient() as cliente:
+        await coletar_fonte(fonte, cliente, repositorio, user_agent=UA,
+                            limiar_sanidade=LIMIAR, teto_centavos=TETO,
+                            notificador=notificador,
+                            limitador=LimitadorPorHost(dormir=_nao_dormir),
+                            dormir=_nao_dormir)
+
+    assert repositorio.sem_oferta == [fonte.id]
+    assert repositorio.com_erro == []          # NÃO desativa
+    assert notificador.mensagens == []         # e não manda "fonte desativada"
+
+
+@pytest.mark.asyncio
+async def test_validacao_de_produto_esgotado_promove_em_vez_de_reprovar():
+    """Caminho da VALIDAÇÃO: fonte nova de produto temporariamente esgotado.
+
+    Sem isto, cadastrar um produto fora de estoque era recusado — a fonte
+    contava 5 tentativas e virava `invalida` com um motivo que culpa a URL.
+    """
+    fonte = FonteFalsa(url=URL_AMAZON, falhas_seguidas=4)
+    repositorio = _repo_com_captura()
+
+    async with httpx.AsyncClient() as cliente:
+        await validar_fonte_pendente(fonte, cliente, repositorio, user_agent=UA,
+                                     teto_centavos=TETO,
+                                     limitador=LimitadorPorHost(dormir=_nao_dormir),
+                                     dormir=_nao_dormir)
+
+    assert repositorio.sem_oferta == [fonte.id]
+    assert repositorio.invalidas == []         # NÃO condena
+    assert repositorio.tentativas == []        # nem conta tentativa
+
+
+@pytest.mark.asyncio
+async def test_esgotado_continua_gravando_leitura():
+    """A leitura precisa existir: é ela que leva `sem_oferta_ativa` até
+    `avaliar_alertas`, que marca `semEstoque` e detecta a volta."""
+    repositorio = _repo_com_captura()
+
+    async with httpx.AsyncClient() as cliente:
+        await coletar_fonte(FonteFalsa(url=URL_AMAZON), cliente, repositorio,
+                            user_agent=UA, limiar_sanidade=LIMIAR,
+                            teto_centavos=TETO,
+                            limitador=LimitadorPorHost(dormir=_nao_dormir),
+                            dormir=_nao_dormir)
+
+    (_, resultado, _), = repositorio.leituras
+    assert resultado.erro == "sem_oferta_ativa"
+    assert resultado.preco_centavos is None

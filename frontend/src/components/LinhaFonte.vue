@@ -29,6 +29,16 @@ const situacao = computed(() => {
   if (f.status === "invalida") {
     return { texto: "Inválida", ponto: "critico", classe: "erro", motivo: explicar(f.motivoInvalida) };
   }
+  // ESGOTADO vem ANTES de "validando". `sem_oferta_ativa` deixa a fonte em
+  // `pendente` para sempre, e chamar isso de "Validando (tentativa 4)" mente
+  // duas vezes: sugere que a URL está errada e esconde a única informação útil
+  // — o produto acabou. A URL está ótima; quem acabou foi o estoque.
+  if (f.motivoInvalida === "sem_oferta_ativa") {
+    return {
+      texto: "Esgotado", ponto: "atencao", classe: "esgotada",
+      motivo: "a loja não tem oferta ativa; você é avisado quando voltar",
+    };
+  }
   if (f.status === "pendente") {
     const falhas = f.falhasSeguidas || 0;
     return {
@@ -89,6 +99,9 @@ const quebrada = computed(() => props.fonte.comErro || props.fonte.status === "i
 }
 .linha.erro { border-color: var(--critico); }
 .linha.apagada { opacity: 0.6; }
+/* Esgotada NÃO fica apagada como a quebrada: é uma fonte saudável esperando o
+   produto voltar, e o usuário precisa vê-la para saber que está sendo vigiada. */
+.linha.esgotada { border-color: var(--atencao); }
 
 /* A mais barata: borda + etiqueta + preço em destaque.
    Três sinais e não só a cor — a mesma regra dos selos de estado. Cor sozinha

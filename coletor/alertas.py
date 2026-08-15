@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from typing import Protocol
 
 from coletor.lojas import condicao_de_pagamento_de
+from coletor.parser import ERRO_SEM_OFERTA
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,8 @@ class Produto(Protocol):
     ativo: bool
     # Quantas mensagens já saíram com `ultimo_preco_alertado_centavos`.
     repeticoes_no_mesmo_preco: int
+    # A última leitura conclusiva disse que o produto acabou.
+    sem_estoque: bool
 
 
 class Leitura(Protocol):
@@ -104,6 +107,9 @@ class Leitura(Protocol):
     preco_centavos: int | None
     disponivel: bool
     suspeito: bool
+    # Motivo da ausência de preço. É o que separa "a loja disse que acabou" de
+    # "não conseguimos ler a página" — ver `esgotada`.
+    erro: str | None
 
 
 @dataclass(frozen=True)
@@ -119,6 +125,11 @@ class Decisao:
     # Quanto o contador vale DEPOIS desta decisão. Calculado aqui, na função
     # pura, para `processar` só persistir — a contagem é regra, não efeito.
     repeticoes_no_mesmo_preco: int = 0
+    # Se o produto está sem estoque DEPOIS desta decisão. Mesma ideia: a regra
+    # decide, `processar` só grava.
+    sem_estoque: bool = False
+    # Este alerta é "voltou ao estoque"? Muda a mensagem, e só isso.
+    voltou_ao_estoque: bool = False
 
 
 def limite_pela_media(
@@ -148,6 +159,30 @@ def leituras_validas(leituras) -> list:
     ]
 
 
+def esgotada(leitura) -> bool:
+    """A LOJA disse que acabou — não é falha nossa de leitura.
+
+    ESTA DISTINÇÃO É O CORAÇÃO DO ALERTA DE VOLTA AO ESTOQUE, e errar nela
+    produz o pior tipo de bug: se um n8n fora do ar (captura vencida, bloqueio,
+    HTTP 403) contasse como "esgotado", TODOS os produtos entrariam em
+    `semEstoque` juntos — e no minuto em que o n8n voltasse, TODOS disparariam
+    "voltou ao estoque" ao mesmo tempo. Uma enxurrada de alertas falsos, no
+    momento em que o sistema acabou de se recuperar.
+
+    Por isso só duas coisas contam como esgotado: a página foi lida e diz que
+    está indisponível, ou o parser achou a página e não achou oferta ativa
+    (`sem_oferta_ativa`, que é o marcador de "produto sem vendedor" da Amazon).
+    Qualquer outro motivo de preço ausente é IGNORÂNCIA, não ausência.
+    """
+    if leitura.preco_centavos is not None:
+        return False
+    erro = getattr(leitura, "erro", None)
+    if erro == ERRO_SEM_OFERTA:
+        return True
+    # Sem erro registrado e marcada como indisponível: a leitura aconteceu.
+    return erro is None and not leitura.disponivel
+
+
 def avaliar(
     produto: Produto,
     leituras,
@@ -169,7 +204,14 @@ def avaliar(
     """
     validas = leituras_validas(leituras)
     if not validas:
-        return Decisao(False, produto.estado, "sem_leitura_valida")
+        # Nada para avaliar. Mas há duas razões muito diferentes para isso, e a
+        # diferença decide se o produto entra em `semEstoque`:
+        #   - a loja disse que acabou  -> esgotou, e queremos avisar na volta
+        #   - não conseguimos ler      -> ignorância, e marcar seria inventar
+        if any(esgotada(leitura) for leitura in leituras):
+            return Decisao(False, produto.estado, "esgotou", sem_estoque=True)
+        return Decisao(False, produto.estado, "sem_leitura_valida",
+                       sem_estoque=produto.sem_estoque)
 
     melhor = min(validas, key=lambda leitura: leitura.preco_centavos)
     preco = melhor.preco_centavos
@@ -191,14 +233,33 @@ def avaliar(
         else 0
     )
 
-    def resultado(notificar, estado, motivo):
+    def resultado(notificar, estado, motivo, voltou=False):
         return Decisao(
             notificar, estado, motivo, preco, melhor,
             gatilho_usado, limite_media, media_historica_centavos,
             # Só uma notificação de verdade avança a contagem. Silêncio a
             # preserva: rearme e cooldown não gastam repetição.
             ja_enviadas + 1 if notificar else ja_enviadas,
+            # Chegou aqui com leitura válida: o produto TEM preço, logo não
+            # está mais esgotado — seja qual for a decisão sobre alertar.
+            sem_estoque=False,
+            voltou_ao_estoque=voltou,
         )
+
+    # VOLTOU AO ESTOQUE — atalho que passa por cima das travas de repetição.
+    #
+    # Sai na frente da tabela de estados de propósito: um produto que sumiu por
+    # uma semana e voltou é notícia mesmo que o preço seja o mesmo de antes, e
+    # mesmo que as repeticões daquele preço já tenham se esgotado. Para item
+    # escasso, "voltou a ter" vale mais que "baixou 5%" — e some rápido.
+    #
+    # Voltar CARO não é notícia: sai do `semEstoque` em silêncio, porque avisar
+    # sobre um preço que você não quer pagar gasta a atenção que o alerta de
+    # verdade vai precisar.
+    if produto.sem_estoque:
+        if preco <= gatilho:
+            return resultado(True, ESTADO_EM_ALERTA, "voltou_ao_estoque", voltou=True)
+        return resultado(False, ESTADO_ACIMA, "voltou_caro")
 
     if produto.estado == ESTADO_ACIMA:
         if preco <= gatilho:
@@ -280,7 +341,9 @@ def _variacao_vs_media(preco_centavos: int, media_centavos: int | None) -> str |
     return f"{variacao:+d}%"
 
 
-def montar_mensagem(produto: Produto, leitura: Leitura) -> str:
+def montar_mensagem(
+    produto: Produto, leitura: Leitura, minima=None, voltou_ao_estoque: bool = False
+) -> str:
     """A mensagem do alerta, no formato de canal de ofertas.
 
     Cinco blocos: produto, preço, link, e o convite. Sem título de "por que
@@ -296,10 +359,25 @@ def montar_mensagem(produto: Produto, leitura: Leitura) -> str:
     condicao = condicao_de_pagamento_de(leitura.url)
     linha_preco = f"✅ {preco} {condicao}".rstrip()
 
+    # A linha da mínima só entra quando ACRESCENTA. "Menor preço em 30 dias" é
+    # o que transforma o alerta de "bateu o limite que você chutou" em "é uma
+    # boa compra". Quando não é recorde, a linha some — repetir "não é o menor"
+    # em toda mensagem só gastaria a atenção de quem lê.
+    linha_minima = ""
+    if minima is not None and minima.e_o_menor(leitura.preco_centavos):
+        linha_minima = f"\n📉 Menor preço em {minima.dias_da_janela} dias\n"
+
+    # "Voltou ao estoque" vai ANTES do preço-recorde: quando as duas são
+    # verdade, a que decide é a disponibilidade — não adianta o menor preço de
+    # 30 dias num produto que não dá para comprar.
+    linha_estoque = "\n🔄 Voltou ao estoque\n" if voltou_ao_estoque else ""
+
     return (
         f"🔥🙏🏻 {produto.nome}\n"
         "\n"
         f"{linha_preco}\n"
+        f"{linha_estoque}"
+        f"{linha_minima}"
         "\n"
         f"Link -> : {leitura.url}\n"
         "\n"
@@ -321,6 +399,7 @@ class RepositorioDeAlertas(Protocol):
         preco_centavos: int | None,
         alertado_em: datetime | None,
         repeticoes_no_mesmo_preco: int = 0,
+        sem_estoque: bool = False,
     ) -> None: ...
 
     def media_historica_centavos(self, produto: Produto) -> int | None: ...
@@ -355,7 +434,20 @@ def processar(
         # A mensagem não mostra mais a média, então o `media_30_dias_centavos`
         # que rodava aqui sumiu junto — era uma varredura do rollup diário por
         # notificação enviada, para um número que ninguém lê.
-        mensagem = montar_mensagem(produto, decisao.leitura)
+        # A mínima é lida SÓ quando vai notificar: é uma varredura do rollup
+        # diário, e rodá-la em todo ciclo de todo produto seria pagar leitura
+        # do Firestore para um número que ninguém veria.
+        minima = None
+        if hasattr(repositorio, "minima_historica"):
+            try:
+                minima = repositorio.minima_historica(produto)
+            except Exception:
+                # Recorde é enfeite; alerta é o essencial. Falhar aqui não pode
+                # engolir a mensagem.
+                logger.exception("falha ao ler a mínima de %s", produto.nome)
+
+        mensagem = montar_mensagem(
+            produto, decisao.leitura, minima, decisao.voltou_ao_estoque)
         imagem = getattr(decisao.leitura, "imagem", None)
 
         # ENVIO FALHO NÃO CONTA COMO ALERTA.
@@ -382,7 +474,7 @@ def processar(
 
         repositorio.atualizar_estado_alerta(
             produto, decisao.novo_estado, decisao.preco_centavos, agora,
-            decisao.repeticoes_no_mesmo_preco,
+            decisao.repeticoes_no_mesmo_preco, decisao.sem_estoque,
         )
         # O diário guarda a MENSAGEM como saiu. Ver `registrar_notificacao`.
         repositorio.registrar_notificacao(produto, {
@@ -396,13 +488,17 @@ def processar(
             "motivo": decisao.motivo,
             "enviadaEm": agora,
         })
-    elif decisao.novo_estado != produto.estado:
-        # Transição silenciosa (rearme ou cooldown): não mexe em
-        # ultimo_alerta_em nem em ultimo_preco_alertado. O contador vai junto
-        # porque o rearme precisa zerá-lo — é a transição que o libera.
+    elif decisao.novo_estado != produto.estado or decisao.sem_estoque != produto.sem_estoque:
+        # Transição silenciosa (rearme, cooldown, esgotou, voltou caro): não
+        # mexe em ultimo_alerta_em nem em ultimo_preco_alertado. O contador e o
+        # `semEstoque` vão junto — é nesta transição que ambos são liberados.
+        #
+        # A condição inclui `sem_estoque` porque "esgotou" NÃO muda o estado do
+        # alerta: sem ela, o produto acabaria e nada seria gravado, e a volta
+        # nunca seria detectada.
         repositorio.atualizar_estado_alerta(
             produto, decisao.novo_estado, None, None,
-            decisao.repeticoes_no_mesmo_preco,
+            decisao.repeticoes_no_mesmo_preco, decisao.sem_estoque,
         )
 
     return decisao

@@ -79,7 +79,7 @@ export function resumo30d(uid, produtoId, fontes) {
   return serieDoPeriodo(uid, produtoId, fontes, PERIODO_DA_MEDIA);
 }
 
-function resumir(serie) {
+function resumir(serie, extra = {}) {
   const valores = serie.map((p) => p.centavos);
   return {
     serie,
@@ -87,6 +87,12 @@ function resumir(serie) {
       ? Math.round(valores.reduce((soma, v) => soma + v, 0) / valores.length)
       : null,
     menor: valores.length ? Math.min(...valores) : null,
+    // A mínima REAL da janela e há quantos dias se observa. Vem separada do
+    // `menor` porque `menor` é da série de fechamentos, e a série é o que o
+    // gráfico desenha. Confundir os dois faria a tela afirmar um recorde que a
+    // mensagem do Telegram não confirma.
+    minimo: extra.minimo ?? (valores.length ? Math.min(...valores) : null),
+    diasObservados: extra.diasObservados ?? serie.length,
   };
 }
 
@@ -101,7 +107,9 @@ async function calcularPorDia(uid, produtoId, fontes, dias) {
     grade.push({ chave: chaveDia(dia), quando: dia });
   }
 
-  const menorPorDia = new Map();
+  const menorPorDia = new Map();   // fechamento — é o que a série desenha
+  const minimoPorDia = new Map();  // mínima REAL do dia — é o que vira recorde
+
   for (const fonte of fontes) {
     for (const ano of anos) {
       const bucket = await lerBucket(
@@ -112,14 +120,31 @@ async function calcularPorDia(uid, produtoId, fontes, dias) {
         if (atual === undefined || valores.fech < atual) {
           menorPorDia.set(chave, valores.fech);
         }
+        // `min` e `fech` são coisas diferentes: o dia pode ter tocado R$ 4.200
+        // de manhã e fechado em R$ 4.800. O gráfico mostra o fechamento; o
+        // "menor preço" precisa da mínima de verdade, senão a tela contradiz a
+        // mensagem do Telegram, que lê `min` (ver `minima_historica`).
+        const minimo = typeof valores.min === "number" ? valores.min : valores.fech;
+        const menorAtual = minimoPorDia.get(chave);
+        if (menorAtual === undefined || minimo < menorAtual) {
+          minimoPorDia.set(chave, minimo);
+        }
       }
     }
   }
+
+  const dentroDaJanela = [...minimoPorDia.entries()]
+    .filter(([chave]) => grade.some((g) => g.chave === chave));
 
   return resumir(
     grade
       .filter(({ chave }) => menorPorDia.has(chave))
       .map(({ chave, quando }) => ({ chave, quando, centavos: menorPorDia.get(chave) })),
+    {
+      minimo: dentroDaJanela.length
+        ? Math.min(...dentroDaJanela.map(([, v]) => v)) : null,
+      diasObservados: dentroDaJanela.length,
+    },
   );
 }
 
