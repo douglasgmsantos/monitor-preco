@@ -10,6 +10,7 @@
 // de agora fica no cartão do produto, onde muda o tempo todo.
 import { computed, ref, watch } from "vue";
 import { formatarBRL } from "../dinheiro.js";
+import { casaTermos } from "../busca.js";
 import { encurtarUrl, siglaDaLoja } from "../lojas.js";
 import { useAuth } from "../composables/useAuth.js";
 import { useNotificacoes } from "../composables/useNotificacoes.js";
@@ -29,11 +30,8 @@ watch(usuario, (quem) => {
 }, { immediate: true });
 
 const filtradas = computed(() => {
-  const texto = busca.value.trim().toLowerCase();
-  if (!texto) return notificacoes.value;
-  return notificacoes.value.filter((n) =>
-    (n.nome || "").toLowerCase().includes(texto)
-    || (n.loja || "").toLowerCase().includes(texto));
+  if (!busca.value.trim()) return notificacoes.value;
+  return notificacoes.value.filter((n) => casaTermos(busca.value, n.nome, n.loja));
 });
 
 // Agrupa por dia. Ver "12 de agosto" uma vez acima de quatro alertas lê melhor
@@ -95,7 +93,7 @@ async function apagar(item) {
     </p>
 
     <div class="filtros">
-      <input v-model="busca" class="busca" placeholder="filtrar por produto ou loja…">
+      <input v-model="busca" class="busca" placeholder="9070 kabum — vários termos, todos precisam aparecer">
       <span class="dica">{{ filtradas.length }} alerta(s)</span>
     </div>
 

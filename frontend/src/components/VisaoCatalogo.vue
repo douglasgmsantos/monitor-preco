@@ -7,6 +7,7 @@
 // números que não são comparáveis.
 import { computed, ref, watch } from "vue";
 import { formatarBRL } from "../dinheiro.js";
+import { casaTermos } from "../busca.js";
 import { nomeDaLojaPorHost, hostDaUrl } from "../lojas.js";
 import { useCatalogo } from "../composables/useCatalogo.js";
 import { useProdutos } from "../composables/useProdutos.js";
@@ -54,8 +55,11 @@ const filtrados = computed(() => {
   const f = filtros.value;
   let itens = catalogo.value.filter((i) => i.preco !== null || i.disponivel === false);
 
-  const texto = busca.value.trim().toLowerCase();
-  if (texto) itens = itens.filter((i) => i.nome.toLowerCase().includes(texto));
+  // Todos os termos precisam aparecer, em qualquer ordem: "ddr5 16gb" acha
+  // "Memória Ram Adata Xpg Lancer Blade Ddr5 16gb". Ver src/busca.js.
+  if (busca.value.trim()) {
+    itens = itens.filter((i) => casaTermos(busca.value, i.nome, i.loja));
+  }
 
   if (f.categoria) itens = itens.filter((i) => i.categoria === f.categoria);
   if (f.loja) itens = itens.filter((i) => i.loja === f.loja);
@@ -113,7 +117,7 @@ function acompanhar(item) {
     </p>
 
     <div class="filtros">
-      <input v-model="busca" class="busca" placeholder="filtrar por nome…" @input="aoFiltrar">
+      <input v-model="busca" class="busca" placeholder="ddr5 16gb — vários termos, todos precisam aparecer" @input="aoFiltrar">
       <span class="dica">{{ filtrados.length }} item(ns)</span>
     </div>
     <FiltrosProdutos

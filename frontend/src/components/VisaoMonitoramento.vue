@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, watch } from "vue";
 import { formatarBRL } from "../dinheiro.js";
+import { casaTermos } from "../busca.js";
 import { nomeDaLojaPorHost, hostDaUrl } from "../lojas.js";
 import {
   menorPrecoAtual, ultimaVerificacao, useProdutos,
@@ -126,16 +127,14 @@ function inicioDoDia(iso) {
  *  ("o que eu sigo na Amazon?"), e a informação já está no cartão — filtrar por
  *  algo que está na tela é o que o usuário espera poder fazer. */
 const filtrados = computed(() => {
-  const texto = busca.value.trim().toLowerCase();
   const f = filtros.value;
   let lista = produtos.value;
 
-  if (texto) {
-    lista = lista.filter((p) => {
-      const nome = (p.dados.nome || "").toLowerCase();
-      if (nome.includes(texto)) return true;
-      return p.fontes.some((x) => (x.loja || "").toLowerCase().includes(texto));
-    });
+  // Nome e lojas entram no mesmo alvo, então "kabum 9070" casa a loja numa
+  // ponta e o modelo na outra. Ver src/busca.js.
+  if (busca.value.trim()) {
+    lista = lista.filter((p) =>
+      casaTermos(busca.value, p.dados.nome, ...p.fontes.map((x) => x.loja)));
   }
 
   if (f.loja) {
@@ -242,7 +241,7 @@ function acompanharItem(item) {
 
       <template v-if="produtos.length">
         <div class="filtros">
-          <input v-model="busca" class="busca" placeholder="filtrar por nome ou loja…"
+          <input v-model="busca" class="busca" placeholder="9070 kabum — vários termos, todos precisam aparecer"
                  @input="aoFiltrar">
           <span class="dica">{{ filtrados.length }} de {{ produtos.length }}</span>
         </div>
