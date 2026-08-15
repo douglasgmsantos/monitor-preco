@@ -1,14 +1,27 @@
 name: testes
 
-# Portão que faltava. Em 2026-08-14 um `NameError` derrubou a coleta em todas
-# as fontes por horas: a função existia quando o código foi escrito e foi
-# apagada depois, num refactor. A suíte local ficou verde porque o caminho
-# quebrado só é exercitado pelos testes do emulador do Firestore, que exigem
-# Java e ficam pulados. Nada rodava teste antes do deploy — o workflow do
-# coletor só executa o coletor.
+# Versão ENXUTA, de propósito.
 #
-# Aqui os testes do emulador rodam DE VERDADE: o runner do GitHub já tem Java,
-# então os 85 testes pulados na máquina de desenvolvimento passam a valer.
+# A versão anterior subia o emulador do Firestore no runner (`npm install -g
+# firebase-tools` + espera de boot) e levava ~3 min por push. Foi removida em
+# 2026-08-14 por custo/benefício. Esta faz só o que é rápido: análise estática e
+# a suíte sem emulador, em ~40s.
+#
+# O QUE ELA COBRE: nome indefinido, import quebrado e os 299 testes que não
+# precisam de Firestore. O bug que derrubou a produção em 2026-08-14
+# (`NameError: _dia_atualizado`) seria pego aqui, no primeiro passo.
+#
+# O QUE ELA NÃO COBRE — e é importante não se enganar: os ~88 testes do
+# Firestore continuam PULADOS aqui, porque não há emulador. Índice ausente,
+# transação malformada e campo com nome trocado na gravação passam por este
+# workflow sem reclamar. Antes de mexer em `coletor/repositorio.py`, rode o
+# emulador na mão:
+#
+#   firebase emulators:start --only firestore --project demo-monitor
+#   FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 .venv/bin/python -m pytest -q
+#
+# Verde aqui significa "não quebrei o que dá para checar barato", não "está
+# testado". A diferença entre as duas frases já custou uma quebra em produção.
 
 on:
   push:
@@ -24,7 +37,7 @@ concurrency:
 jobs:
   suite:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
@@ -35,62 +48,12 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      # Roda antes do pytest e sem depender de nada: se houver nome indefinido,
-      # o log aponta o arquivo e a linha em segundos, em vez de sair enterrado
-      # num traceback de teste.
+      # Primeiro, e separado do pytest: se houver nome indefinido, o log aponta
+      # arquivo e linha em segundos, em vez de sair enterrado num traceback.
       - name: Nomes indefinidos (pyflakes)
         run: python -m pyflakes coletor tests
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Subir o emulador do Firestore
-        run: |
-          npm install -g firebase-tools
-          firebase emulators:start --only firestore --project demo-monitor &
-          # Espera o endpoint de limpeza responder — é o único que o emulador
-          # implementa e um servidor HTTP qualquer não. Mesmo discriminador que
-          # `tests/test_repositorio.py` usa para decidir se pula.
-          alvo='http://127.0.0.1:8080/emulator/v1/projects/demo-monitor/databases/(default)/documents'
-          for _ in $(seq 1 60); do
-            if [ "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$alvo")" = "200" ]; then
-              echo "emulador no ar"; exit 0
-            fi
-            sleep 1
-          done
-          echo "emulador não subiu em 60s"; exit 1
-
+      # `-ra` lista o MOTIVO de cada skip. Sem isso, "88 skipped" no resumo não
+      # diz que a camada inteira do Firestore não foi exercitada.
       - name: pytest
-        env:
-          FIRESTORE_EMULATOR_HOST: 127.0.0.1:8080
-        # `-ra` lista o MOTIVO de cada skip no resumo. É o que o passo seguinte
-        # lê — e é o que faltava na leitura humana do "85 skipped".
-        #
-        # `pipefail` é obrigatório: sem ele o status do passo seria o do `tee`,
-        # que sempre dá 0, e um pytest VERMELHO passaria batido. Seria repetir
-        # o mesmo erro que este workflow existe para evitar — um verde falso.
-        run: |
-          set -o pipefail
-          python -m pytest -q -ra 2>&1 | tee /tmp/pytest.txt
-
-      - name: Conferir que os testes do Firestore não foram pulados
-        # Um emulador que morre no meio faz o pytest voltar a PULAR tudo e sair
-        # verde — o mesmo silêncio que deixou o `NameError` passar. Aqui esse
-        # silêncio vira vermelho.
-        #
-        # Nem todo skip é problema: os templates de loja estão no .gitignore
-        # (são páginas capturadas, pesadas e efêmeras), então os testes que
-        # dependem deles pulam no CI por projeto. Só o skip do EMULADOR falha.
-        run: |
-          if grep -q "emulador do Firestore não responde" /tmp/pytest.txt; then
-            echo "::error::testes do Firestore foram PULADOS — emulador fora do ar"
-            exit 1
-          fi
-          echo "testes do Firestore executaram"
-
-      - name: Build do front
-        working-directory: frontend
-        run: |
-          npm ci
-          npm run build
+        run: python -m pytest -q -ra

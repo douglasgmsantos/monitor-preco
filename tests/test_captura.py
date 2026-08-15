@@ -226,12 +226,114 @@ def test_workflow_usa_service_account_e_nao_oauth2():
 
 
 @pytest.mark.skipif(WORKFLOW is None, reason="workflow do n8n ausente")
+def horas_do_gatilho() -> int:
+    """Intervalo do scheduleTrigger, em horas.
+
+    `hoursInterval` some do JSON quando vale 1 — o n8n não exporta o valor
+    padrão. Ler direto com `[...]` dava `KeyError` e o teste morria dizendo
+    "chave ausente" quando o que mudou foi a cadência de 3h para 1h.
+    """
+    gatilho = next(n for n in _fluxo()["nodes"] if n["type"].endswith("scheduleTrigger"))
+    intervalo = gatilho["parameters"]["rule"]["interval"][0]
+    assert intervalo.get("field") == "hours", f"gatilho não é por hora: {intervalo}"
+    return intervalo.get("hoursInterval", 1)
+
+
+def _nome_do_no_por_tipo(sufixo: str) -> str:
+    """Acha um nó pelo TIPO e devolve o nome dele.
+
+    Nunca fixe o nome: o n8n renomeia ao reimportar ("Uma fonte por vez" virou
+    "Uma fonte por vez1" e depois voltou), e um teste preso ao nome quebra por
+    motivo errado — ou pior, some num `KeyError` que parece bug do workflow.
+    """
+    achados = [n for n in _fluxo()["nodes"] if n["type"].endswith(sufixo)]
+    assert len(achados) == 1, f"esperava 1 nó do tipo {sufixo}, achei {len(achados)}"
+    return achados[0]["name"]
+
+
+def test_workflow_avisa_o_actions_uma_vez_so():
+    """O disparo pende da saída `done` do loop, não da saída por item.
+
+    A saída 1 do splitInBatches roda UMA VEZ POR FONTE. Ligar o disparo ali
+    renderia 9 chamadas por captura — e como o workflow do coletor usa
+    `concurrency: coletor` com `cancel-in-progress: false`, as outras 8 ficariam
+    enfileiradas rodando ciclos idênticos. A saída 0 emite uma vez, no fim.
+    """
+    laco = _fluxo()["connections"][_nome_do_no_por_tipo("splitInBatches")]["main"]
+    destinos_done = {s["node"] for s in (laco[0] or [])}
+    destinos_loop = {s["node"] for s in (laco[1] or [])}
+
+    assert "Avisar o GitHub Actions" in destinos_done
+    assert "Avisar o GitHub Actions" not in destinos_loop
+
+
+@pytest.mark.skipif(WORKFLOW is None, reason="workflow do n8n ausente")
+def test_disparo_nao_manda_inputs_e_depende_do_default_do_workflow():
+    """O corpo é só `{ref}`.
+
+    O input `forcar` é do tipo boolean, e mandar `"true"` (string) pela API do
+    GitHub esbarra na validação de tipo. Omitir faz valer o `default: true`
+    declarado em coletor.yml — que é justamente o comportamento desejado.
+    """
+    parametros = _no("Avisar o GitHub Actions")["parameters"]
+    assert "inputs" not in parametros["jsonBody"]
+    assert "ref" in parametros["jsonBody"]
+    assert parametros["method"] == "POST"
+    assert parametros["url"].endswith("/actions/workflows/coletor.yml/dispatches")
+
+
+@pytest.mark.skipif(WORKFLOW is None, reason="workflow do n8n ausente")
+def test_o_default_do_forcar_existe_e_e_verdadeiro():
+    """Amarra o JSON do n8n ao YAML do Actions.
+
+    O teste acima só faz sentido se o default existir mesmo. Se alguém trocar
+    `default: true` no workflow, a chamada do n8n passaria a rodar SEM forçar e
+    a coleta ficaria esperando a janela de 30 min — em silêncio, sem erro.
+    """
+    yaml = pytest.importorskip("yaml")
+    caminho = Path(__file__).resolve().parent.parent / ".github/workflows/coletor.yml"
+    gatilhos = yaml.safe_load(caminho.read_text(encoding="utf-8"))
+    # YAML 1.1 lê a chave `on` como booleano True.
+    entradas = (gatilhos.get("on") or gatilhos.get(True))["workflow_dispatch"]["inputs"]
+    assert entradas["forcar"]["default"] is True
+
+
+@pytest.mark.skipif(WORKFLOW is None, reason="workflow do n8n ausente")
+def test_nenhum_segredo_versionado_no_workflow():
+    """O repositório é PÚBLICO. Token no JSON é vazamento, não configuração.
+
+    O PAT mora numa credencial 'Header Auth' do n8n, que fica no n8n. Este teste
+    é o que impede um export descuidado de publicar o token junto.
+    """
+    texto = WORKFLOW.read_text(encoding="utf-8")
+    for marca in ("ghp_", "github_pat_", "-----BEGIN", "AAAAB3Nza"):
+        assert marca not in texto, f"possível segredo versionado: {marca}"
+
+
+@pytest.mark.skipif(WORKFLOW is None, reason="workflow do n8n ausente")
 def test_workflow_captura_com_folga_antes_de_vencer():
     """A cadência do n8n precisa ser menor que a validade da captura, senão ela
     vence antes de o coletor ler e o sistema não coleta nunca."""
-    gatilho = next(n for n in _fluxo()["nodes"] if n["type"].endswith("scheduleTrigger"))
-    horas = gatilho["parameters"]["rule"]["interval"][0]["hoursInterval"]
-    assert horas < captura.HORAS_DE_VALIDADE_PADRAO
+    assert horas_do_gatilho() < captura.HORAS_DE_VALIDADE_PADRAO
+
+
+@pytest.mark.skipif(WORKFLOW is None, reason="workflow do n8n ausente")
+def test_cada_captura_dispara_uma_coleta_forcada():
+    """Cadência da captura = cadência dos disparos forçados.
+
+    Cada execução do n8n termina chamando o `workflow_dispatch`, e disparo
+    forçado NÃO grava `sistema/controle` — logo não deduplica: são coletas reais
+    somadas às agendadas, cada uma batendo em todas as fontes ativas.
+
+    O teto de 4 por hora é folgado de propósito (hoje é 1). Existe para que
+    baixar a cadência a minutos quebre aqui, e não vire tráfego nas lojas que
+    ninguém percebeu ter criado.
+    """
+    disparos_por_dia = 24 / horas_do_gatilho()
+    assert disparos_por_dia <= 24 * 4, (
+        f"{disparos_por_dia:.0f} coletas forçadas por dia — a captura ficou "
+        "frequente demais para disparar coleta a cada execução"
+    )
 
 
 # ---------------------------------------------------------------------------

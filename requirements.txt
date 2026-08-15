@@ -9,3 +9,6 @@ respx==0.21.*
 # uma chamada a função apagada só aparece em produção — foi o que aconteceu em
 # 2026-08-14. Ver tests/test_sanidade_estatica.py.
 pyflakes==3.4.*
+# Só os testes usam: é o que permite amarrar o JSON do n8n ao YAML do Actions
+# (o `default: true` do input `forcar`). Sem ele esse teste vira skip.
+pyyaml==6.*

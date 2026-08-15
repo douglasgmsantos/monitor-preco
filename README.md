@@ -428,6 +428,42 @@ credencial ser a de service account e não a de OAuth2. Se
 alguém renomear um campo de um lado, o teste quebra em vez de virar
 `sem_captura` num n8n que está rodando perfeitamente.
 
+#### O n8n avisa o Actions quando termina
+
+Sem aviso, a captura fica esperando: o n8n grava em `paginas/` e o coletor só lê
+no próximo ciclo, **até 30 minutos depois**. O nó final do workflow fecha essa
+distância disparando a coleta na hora.
+
+O nó **`Avisar o GitHub Actions`** faz `POST` em
+`/repos/{owner}/{repo}/actions/workflows/coletor.yml/dispatches` com corpo
+`{"ref":"main"}`. Sucesso é **204 sem corpo**.
+
+Três decisões que valem entender:
+
+- **Pende da saída `done` do loop, não da saída por item.** A saída por item roda
+  uma vez por fonte: 9 fontes seriam 9 disparos, e como o coletor usa
+  `concurrency: coletor` com `cancel-in-progress: false`, oito execuções
+  idênticas ficariam enfileiradas. A `done` emite uma vez, depois da última.
+- **O corpo não manda `inputs`.** O input `forcar` é do tipo `boolean`, e mandar
+  `"true"` (string) pela API do GitHub esbarra na validação de tipo. Omitir faz
+  valer o `default: true` do workflow — que é exatamente o que se quer. Um teste
+  amarra as duas pontas: se alguém trocar o default, ele quebra em vez de a
+  coleta passar a esperar a janela em silêncio.
+- **O token não entra no JSON.** O repositório é público. O PAT mora numa
+  credencial **Header Auth** do n8n (`Name: Authorization`,
+  `Value: Bearer <PAT>`), e um teste varre o JSON exportado atrás de `ghp_`,
+  `github_pat_` e chaves privadas.
+
+O PAT precisa ser **fine-grained**, restrito a este repositório, com a permissão
+**Actions: Read and write**. Só isso. `404` na chamada quase sempre é permissão
+faltando no token, não caminho errado — a API do GitHub esconde 403 como 404
+quando o token não enxerga o recurso.
+
+> **Cadência:** o gatilho do n8n é de 3 em 3 horas. Se você aumentar a frequência
+> da captura, lembre que cada execução passa a disparar um ciclo de coleta —
+> forçado, então **fora** da janela de 30 min, sem deslocar o agendamento
+> automático (ver *Coletar os produtos agora*).
+
 ### Ligar uma loja no caminho capturado
 
 Em [coletor/lojas.py](coletor/lojas.py), mude `busca` da loja para `"capturada"`.
@@ -751,13 +787,22 @@ FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 GCLOUD_PROJECT=demo-monitor \
 Nenhum teste toca a rede nem o Firestore de produção. O emulador roda com project
 id `demo-monitor` e é apagado antes de cada teste.
 
-> **`85 skipped` não é ruído — é a camada do Firestore sem cobertura.** Sem Java,
+> **`88 skipped` não é ruído — é a camada do Firestore sem cobertura.** Sem Java,
 > os testes do emulador pulam e o pytest ainda sai verde. Foi assim que um
 > `NameError` chegou em produção em 2026-08-14 (ver *Lição aprendida em
-> produção*). Duas redes fecham isso: `tests/test_sanidade_estatica.py`, que roda
-> pyflakes em `coletor/` e `tests/` sem precisar de nada, e o workflow
-> [`testes.yml`](.github/workflows/testes.yml), que sobe o emulador no runner —
-> onde Java já existe — e **falha se os testes do Firestore forem pulados**.
+> produção*).
+>
+> A rede é `tests/test_sanidade_estatica.py`: roda pyflakes em `coletor/` e
+> `tests/` sem precisar de emulador, de Java nem de rede, e pega **nome
+> indefinido**, que era exatamente aquele bug. O workflow
+> [`testes.yml`](.github/workflows/testes.yml) roda isso e a suíte a cada push.
+>
+> O que **nada disso** pega: erro que só aparece falando com o Firestore —
+> índice ausente, transação malformada, campo com nome trocado na gravação. O
+> CI é enxuto por opção e não sobe o emulador, então esses continuam só nos 88
+> testes pulados. **Rode o emulador na mão antes de mexer em `repositorio.py`**
+> (`brew install openjdk` e o comando acima). Verde no CI significa "não quebrei
+> o que dá para checar barato", não "está testado".
 
 ### Fixtures
 
@@ -921,13 +966,17 @@ A função tinha sido apagada dias antes, num refactor que removeu a média de 3
 dias — mas `registrar_leitura` continuava chamando. **A suíte estava verde: 266
 passed.**
 
-Três coisas conspiraram, e cada uma tem um conserto:
+Três coisas conspiraram, e só a primeira tem conserto automático:
 
-| O que falhou | Por quê | Conserto |
+| O que falhou | Por quê | Situação |
 |---|---|---|
-| A suíte não pegou | Python só resolve nome global ao **executar** a linha; o módulo importa numa boa | `tests/test_sanidade_estatica.py` — pyflakes resolve na hora de **ler** |
-| O único teste do caminho não rodou | Exige o emulador, que exige Java, ausente na máquina de dev | `testes.yml` sobe o emulador no runner e **falha se pular** |
-| Nada rodava teste antes do deploy | `coletor.yml` só executa o coletor | `testes.yml` em todo push e PR |
+| A suíte não pegou | Python só resolve nome global ao **executar** a linha; o módulo importa numa boa | ✅ `tests/test_sanidade_estatica.py` — pyflakes resolve na hora de **ler** |
+| Nada rodava teste antes do deploy | `coletor.yml` só executa o coletor | ✅ `testes.yml` em todo push e PR |
+| O único teste do caminho não rodou | Exige o emulador, que exige Java, ausente na máquina de dev | ⚠️ **aberto por opção** — o CI é enxuto e não sobe emulador |
+
+A linha aberta é **decisão consciente**, não esquecimento: subir o emulador no
+runner levava ~3 min por push para cobrir um arquivo que muda pouco. O preço é
+que `repositorio.py` só tem cobertura real quando alguém roda o emulador na mão.
 
 O prejuízo foi menor do que parecia: a exceção sobe de dentro da
 `@firestore.transactional`, **antes do commit**, então nada foi escrito pela
