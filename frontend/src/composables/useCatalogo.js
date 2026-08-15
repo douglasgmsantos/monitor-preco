@@ -37,6 +37,13 @@ async function carregarCatalogo() {
             preco: i.p ?? null,          // preço que a vitrine apresenta
             tabela: i.t ?? null,         // preço "de" riscado, quando publicado
             disponivel: i.d ?? null,
+            // Janela de 7 dias (dia -> preço) e mínima histórica, gravadas pela
+            // raspagem dentro do próprio item. Vêm de graça: o documento já é
+            // lido para listar. Ver coletor/repositorio.py::historico_do_item.
+            historico: i.h || {},
+            minHistorico: i.min ?? null,
+            diaDoMinimo: i.minD || null,
+            diasDeHistorico: Object.keys(i.h || {}).length,
           });
         }
       }

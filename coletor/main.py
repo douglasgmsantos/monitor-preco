@@ -23,7 +23,6 @@ from google.api_core.exceptions import FailedPrecondition, PermissionDenied
 from coletor import alertas, config
 from coletor.coleta import LimitadorPorHost, coletar_fontes, validar_fonte_pendente
 from coletor.notificador import NotificadorTelegram, notificador_do_usuario
-from coletor.raspagem import Categoria, raspar
 from coletor.repositorio import Repositorio, inicializar, uid_do_produto
 
 logger = logging.getLogger("coletor")
@@ -152,51 +151,6 @@ def avaliar_alertas(
     return notificados
 
 
-async def _raspar_se_for_hora(
-    repositorio: Repositorio,
-    cliente: httpx.AsyncClient,
-    limitador: LimitadorPorHost,
-    cfg: config.Config,
-    agora: datetime,
-) -> dict | None:
-    """Raspa o catálogo quando o intervalo próprio já passou.
-
-    Portão separado do da coleta: o catálogo muda de composição em dias, o
-    preço muda em horas. Raspar junto com a coleta gastaria requisições nas
-    lojas sem informação nova.
-    """
-    if not cfg.categorias_raspagem:
-        return None
-
-    ultima = repositorio.ler_controle_raspagem()
-    if not esta_na_hora(ultima, agora, cfg.intervalo_raspagem_horas):
-        logger.info("fora da janela de raspagem (última em %s)", ultima)
-        return None
-
-    categorias = [Categoria.da_url(url) for url in cfg.categorias_raspagem]
-    logger.info("raspando %d categoria(s)", len(categorias))
-    try:
-        total = await raspar(
-            categorias,
-            repositorio,
-            user_agent=cfg.user_agent,
-            teto_centavos=cfg.teto_centavos,
-            cliente=cliente,
-            limitador=limitador,
-        )
-    except Exception:
-        logger.exception("raspagem abortada; a coleta segue normalmente")
-        return None
-
-    repositorio.gravar_controle_raspagem(agora)
-    logger.info(
-        "catálogo: %d categoria(s), %d itens (%d novos, %d alterados, %d iguais)",
-        total["categorias"], total["itens"],
-        total["novos"], total["alterados"], total["inalterados"],
-    )
-    return total
-
-
 def esta_na_hora(
     ultima: datetime | None, agora: datetime, intervalo_horas: int
 ) -> bool:
@@ -233,7 +187,7 @@ async def executar_ciclo(
         notificador = NotificadorTelegram(cfg.telegram_bot_token, cfg.telegram_chat_id)
 
     resumo = {"pendentes": 0, "coletadas": 0, "notificados": 0,
-              "coletou": False, "forcada": False, "catalogo": None}
+              "coletou": False, "forcada": False}
     limitador = LimitadorPorHost()
 
     async with httpx.AsyncClient(follow_redirects=True) as cliente:
@@ -242,12 +196,18 @@ async def executar_ciclo(
             repositorio, cliente, limitador, cfg
         )
 
-        # Raspagem de catálogo — cadência própria, bem mais lenta que a coleta.
-        # Descobrir que produtos existem muda devagar; o preço deles, não.
-        resumo["catalogo"] = await _raspar_se_for_hora(
-            repositorio, cliente, limitador, cfg, agora
-        )
-
+        # A RASPAGEM DE CATÁLOGO NÃO MORA MAIS AQUI.
+        #
+        # Ela virou um entrypoint próprio (`coletor.catalogo`), com workflow
+        # próprio, disparado pelo n8n. Dois motivos:
+        #
+        # 1. São trabalhos diferentes com cadências diferentes. A coleta lê ~10
+        #    páginas de produto a cada 2h; a raspagem varre 10 categorias com
+        #    paginação, uma vez por dia. Juntas, a lenta atrasava a rápida e um
+        #    erro numa contaminava o log da outra.
+        # 2. Ampliar o catálogo além da KaBuM exige buscar de um IP que as
+        #    outras lojas aceitem — ou seja, pelo n8n. Com a raspagem colada no
+        #    ciclo do runner, esse caminho não existia.
         # Passos 3 e 4 — a cadência vem de sistema/controle, nunca do cron.
         ultima = repositorio.ler_controle()
         na_janela = esta_no_minuto(ultima, agora, cfg.intervalo_coleta_minutos)

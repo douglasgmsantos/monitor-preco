@@ -229,6 +229,48 @@
       "onError": "continueRegularOutput",
       "notes": "Dispara a coleta assim que TODAS as capturas terminam.\n\nexecuteOnce=true É OBRIGATÓRIO AQUI. Um nó de HTTP Request roda UMA VEZ POR ITEM de entrada, e a saída 'done' do splitInBatches emite todos os itens acumulados do laço — um por fonte. Sem executeOnce foram 8 chamadas numa execução (runs #113 a #120 em 2026-08-15). Estar na saída certa garante que o nó é ALCANÇADO uma vez; não garante que ele EXECUTA uma vez.\n\nO estrago foi contido por `concurrency: coletor` com cancel-in-progress=false no workflow do Actions: o GitHub mantém no máximo um run em execução e um pendente, e cada disparo novo cancela o pendente anterior. Dos 8, 2 rodaram e 6 foram cancelados em 1-3s. Contenção não é conserto.\n\nPOR QUE NA SAÍDA 'done' E NÃO NA DO LAÇO: a saída do laço roda a cada fonte, durante a captura — dispararia a coleta antes de as páginas existirem.\n\nCORPO SEM `inputs`: o input `forcar` do workflow tem `default: true`, e o GitHub aplica o default quando a chamada omite. Mandar {\"forcar\": \"true\"} esbarraria na validação de tipo boolean da API.\n\nCREDENCIAL: 'Header Auth' genérica, Name=Authorization, Value=Bearer <PAT>. O token NUNCA entra neste JSON — o repositório é público. PAT fine-grained, só este repositório, permissão 'Actions: Read and write'.\n\nSucesso é 204 sem corpo.",
       "executeOnce": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/repos/douglasgmsantos/monitor-preco/actions/workflows/catalogo.yml/dispatches",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ref: \"main\" }) }}",
+        "options": {}
+      },
+      "id": "c4a91f77-2b30-4e6a-8d15-9f0e73c6a2b1",
+      "name": "Disparar raspagem do catálogo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2848,
+        560
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mBHqmrw3RvPndRbf",
+          "name": "Header Auth account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "Dispara a RASPAGEM DE CATÁLOGO, que saiu do ciclo de coleta em 2026-08-15.\n\nMesmo nó, outro workflow: `catalogo.yml` em vez de `coletor.yml`. Os dois usam grupos de concorrência diferentes no Actions, então uma raspagem de 10 minutos não cancela um ciclo de coleta pendente.\n\nexecuteOnce=true pelo mesmo motivo do outro: um nó de HTTP Request roda uma vez POR ITEM, e a saída 'done' do splitInBatches emite um item por fonte.\n\nCORPO SEM `inputs`: vale o `default: true` do input `forcar` declarado em catalogo.yml. O GitHub aplica o default quando a chamada omite, e mandar string num input boolean é recusado pela API.\n\nCredencial: a mesma 'Header Auth' do outro disparo — o PAT precisa de 'Actions: Read and write' no repositório.",
+      "executeOnce": true
     }
   ],
   "pinData": {},
@@ -260,6 +302,11 @@
         [
           {
             "node": "Avisar o GitHub Actions",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Disparar raspagem do catálogo",
             "type": "main",
             "index": 0
           }

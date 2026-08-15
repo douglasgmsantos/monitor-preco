@@ -842,6 +842,33 @@ repositório.** Dispare o `workflow_dispatch` manualmente ao menos uma vez por
 mês, ou faça um commit. O GitHub avisa por e-mail antes de desabilitar — não
 ignore esse e-mail.
 
+### Dois workflows, dois trabalhos
+
+Desde 2026-08-15 a raspagem de catálogo **não roda mais no ciclo de coleta**:
+
+| Workflow | O que faz | Cadência | Quem dispara |
+|---|---|---|---|
+| `coletor.yml` | preço dos produtos acompanhados, alertas | 2h | cron de 15 min + n8n |
+| `catalogo.yml` | varre as categorias e alimenta a vitrine | 24h | n8n + cron diário (piso) |
+
+Por que separados:
+
+- **São trabalhos diferentes.** A coleta lê ~10 páginas de produto e é o que
+  dispara alerta; a raspagem varre 10 categorias com paginação. Juntas, a lenta
+  atrasava a rápida e um erro na raspagem enchia o log do que importa.
+- **Grupos de `concurrency` distintos.** O GitHub mantém um run ativo e um
+  pendente por grupo, e o novo cancela o pendente. Compartilhando o grupo, uma
+  raspagem de 10 minutos cancelaria um ciclo de coleta em espera.
+- **Catálogo além da KaBuM exige outro IP.** Terabyte, Amazon e Pichau recusam o
+  datacenter do runner. Com a raspagem colada ao ciclo, o caminho pelo n8n não
+  existia.
+
+O parser continua em Python de propósito: `raspagem.py` tem paginação que para
+por repetição de SKU, normalização em centavos e a regra dos 7 dias na vitrine,
+tudo com teste. Portar isso para um nó de Code do n8n seria trocar código
+testado por código sem teste, num sandbox onde nem `require` funciona. **O n8n
+manda executar; quem interpreta é o Python.**
+
 O cron roda de 15 em 15 minutos, mas a coleta pesada só acontece quando
 `sistema/controle.ultimaColetaEm` indica que o intervalo real passou. O GitHub
 atrasa e **pula** execuções sob carga; a cadência efetiva é "pelo menos a cada

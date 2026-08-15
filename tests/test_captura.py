@@ -532,3 +532,56 @@ async def test_sem_captura_registra_leitura_com_o_motivo(terabyte_capturada):
 
     assert len(repositorio.leituras) == 1
     assert repositorio.leituras[0][1].erro == captura.ERRO_SEM_CAPTURA
+
+
+@pytest.mark.skipif(WORKFLOW is None, reason="workflow do n8n ausente")
+def test_n8n_dispara_os_dois_workflows_uma_vez_cada():
+    """Captura terminada dispara COLETA e RASPAGEM, em workflows separados."""
+    laco = _fluxo()["connections"][_nome_do_no_por_tipo("splitInBatches")]["main"]
+    done = {s["node"] for s in (laco[0] or [])}
+    assert {"Avisar o GitHub Actions", "Disparar raspagem do catálogo"} <= done
+
+    alvo = _no("Disparar raspagem do catálogo")
+    assert alvo["parameters"]["url"].endswith("/actions/workflows/catalogo.yml/dispatches")
+    # Mesma armadilha do outro disparo: sem isto sai um por fonte capturada.
+    assert alvo.get("executeOnce") is True
+
+
+def _workflow(nome: str) -> dict:
+    yaml = pytest.importorskip("yaml")
+    caminho = Path(__file__).resolve().parent.parent / ".github/workflows" / nome
+    return yaml.safe_load(caminho.read_text(encoding="utf-8"))
+
+
+def test_coleta_e_catalogo_nao_disputam_a_mesma_concorrencia():
+    """Grupos de `concurrency` DIFERENTES.
+
+    O GitHub mantém no máximo um run em execução e um pendente por grupo, e o
+    novo cancela o pendente anterior. Se os dois workflows dividissem o grupo,
+    uma raspagem de 10 minutos cancelaria o ciclo de coleta que estivesse
+    esperando — que é exatamente a interferência que a separação (2026-08-15)
+    existe para acabar.
+    """
+    coletor = _workflow("coletor.yml")["concurrency"]["group"]
+    catalogo = _workflow("catalogo.yml")["concurrency"]["group"]
+    assert coletor != catalogo
+
+
+def test_catalogo_tem_piso_agendado():
+    """O `schedule` é a rede: sem ele, um n8n morto congela a vitrine em
+    silêncio, porque nada mais dispara a raspagem."""
+    gatilhos = _workflow("catalogo.yml")
+    gatilhos = gatilhos.get("on") or gatilhos.get(True)
+    assert "schedule" in gatilhos
+    assert "workflow_dispatch" in gatilhos
+
+
+def test_o_coletor_nao_carrega_mais_config_de_raspagem():
+    """Variáveis de raspagem saíram do workflow do coletor.
+
+    Mantê-las ali sugeriria que ele ainda raspa, e a próxima pessoa gastaria uma
+    tarde procurando por que `CATEGORIAS_RASPAGEM` não faz nada.
+    """
+    env = _workflow("coletor.yml")["jobs"]["ciclo"]["steps"][-1]["env"]
+    assert "CATEGORIAS_RASPAGEM" not in env
+    assert "INTERVALO_RASPAGEM_HORAS" not in env

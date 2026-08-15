@@ -275,3 +275,101 @@ async def test_nao_avisa_quando_a_pagina_rende_o_que_declara(limitador, caplog):
             )
 
     assert not any("TRUNCADA" in m for m in caplog.messages)
+
+
+# --- histórico de preço do catálogo ------------------------------------------
+#
+# Guardado DENTRO do item da vitrine, em janela rolante de 7 dias. O documento
+# da categoria já está em 38% do teto de 1 MiB com 856 itens; série infinita ali
+# estouraria e derrubaria a categoria inteira. Ver DIAS_DE_HISTORICO_DO_CATALOGO.
+
+from datetime import datetime, timedelta, timezone
+from coletor.repositorio import (
+    DIAS_DE_HISTORICO_DO_CATALOGO, chave_dia, historico_do_item,
+)
+
+QUANDO = datetime(2026, 8, 15, 12, 0, tzinfo=timezone.utc)
+
+
+def test_primeiro_dia_abre_historico_e_minima():
+    r = historico_do_item(None, 129_999, QUANDO)
+    assert r["h"] == {chave_dia(QUANDO): 129_999}
+    assert r["min"] == 129_999
+    assert r["minD"] == chave_dia(QUANDO)
+
+
+def test_dias_seguintes_acumulam():
+    estado = None
+    for i, preco in enumerate([130_000, 125_000, 128_000]):
+        estado = historico_do_item(estado, preco, QUANDO + timedelta(days=i))
+    assert len(estado["h"]) == 3
+    assert estado["min"] == 125_000
+    assert estado["minD"] == chave_dia(QUANDO + timedelta(days=1))
+
+
+def test_janela_poda_em_sete_dias():
+    estado = None
+    for i in range(20):
+        estado = historico_do_item(estado, 100_000 + i, QUANDO + timedelta(days=i))
+    assert len(estado["h"]) == DIAS_DE_HISTORICO_DO_CATALOGO
+
+
+def test_minima_sobrevive_a_poda_da_janela():
+    """O selo é de menor preço HISTÓRICO, não da semana.
+
+    Podar a mínima junto com a janela faria o recorde de duas semanas atrás
+    sumir, e o selo passaria a dizer "menor preço" para o menor dos últimos 7
+    dias — que é outra afirmação, e mais fraca.
+    """
+    estado = historico_do_item(None, 50_000, QUANDO)          # pechincha
+    for i in range(1, 15):
+        estado = historico_do_item(estado, 130_000, QUANDO + timedelta(days=i))
+
+    assert chave_dia(QUANDO) not in estado["h"]   # saiu da janela
+    assert estado["min"] == 50_000                # mas a mínima ficou
+    assert estado["minD"] == chave_dia(QUANDO)
+
+
+def test_esgotado_nao_entra_no_historico():
+    """Ausência de preço não é preço baixo.
+
+    Gravar zero afundaria a média da semana e faria o selo de menor preço
+    disparar num produto que ninguém pode comprar.
+    """
+    estado = historico_do_item(None, 130_000, QUANDO)
+    depois = historico_do_item(estado, None, QUANDO + timedelta(days=1))
+
+    assert len(depois["h"]) == 1
+    assert depois["min"] == 130_000
+
+
+def test_duas_raspagens_no_mesmo_dia_nao_duplicam():
+    """Chave por dia: a segunda leitura substitui, não acrescenta ponto."""
+    estado = historico_do_item(None, 130_000, QUANDO)
+    estado = historico_do_item(estado, 128_000, QUANDO.replace(hour=23))
+
+    assert estado["h"] == {chave_dia(QUANDO): 128_000}
+    assert estado["min"] == 128_000
+
+
+def test_item_sem_preco_nenhum_nunca_ganha_minima():
+    r = historico_do_item(None, None, QUANDO)
+    assert r["h"] == {}
+    assert "min" not in r
+
+
+def test_espaco_por_item_cabe_no_orcamento():
+    """O documento maior tem 856 itens e 384 KB (38% do teto de 1 MiB).
+
+    Este teste é o que impede alguém de aumentar a janela sem fazer a conta: com
+    ~175 bytes por item o pior documento vai a ~51%; dobrar a janela o levaria
+    a perto do limite, e estourar derruba a CATEGORIA INTEIRA.
+    """
+    import json
+    estado = None
+    for i in range(DIAS_DE_HISTORICO_DO_CATALOGO):
+        estado = historico_do_item(estado, 1_299_999, QUANDO + timedelta(days=i))
+
+    bytes_por_item = len(json.dumps(estado).encode())
+    assert bytes_por_item < 220, f"{bytes_por_item} bytes por item — refaça a conta"
+    assert 856 * bytes_por_item < 200_000   # < 200 KB somados ao documento

@@ -40,6 +40,9 @@ class Config:
     # Avisa a cada ciclo enquanto o preço estiver na faixa, sem regra dos 5% e
     # sem cooldown. Ver `REPETIR_NO_RANGE_PADRAO` em coletor/alertas.py.
     alerta_repete_no_range: bool = True
+    # Execução manual da raspagem: varre AGORA, sem esperar as 24h. Espelha
+    # `forcar_coleta`, e é o que o n8n usa ao terminar a captura das listagens.
+    forcar_raspagem: bool = False
 
 
 def carregar() -> Config:
@@ -75,6 +78,7 @@ def carregar() -> Config:
         alerta_repete_no_range=_booleano(
             os.environ.get("ALERTA_REPETE_NO_RANGE", "true")
         ),
+        forcar_raspagem=_booleano(os.environ.get("FORCAR_RASPAGEM")),
     )
 
 

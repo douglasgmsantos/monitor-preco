@@ -1,0 +1,60 @@
+name: catalogo
+
+# Raspagem da vitrine. Separada do `coletor` desde 2026-08-15.
+#
+# POR QUE UM WORKFLOW PRÓPRIO: são trabalhos com cadências e riscos diferentes.
+# A coleta lê ~10 páginas de produto a cada 2h e é o que dispara alerta; esta
+# varre 10 categorias com paginação, uma vez por dia, e só alimenta a vitrine.
+# Juntas, a lenta atrasava a rápida, e um erro na raspagem enchia o log do ciclo
+# que importa. Agora ela falha sozinha, sem levar o alerta junto.
+#
+# QUEM DISPARA: o n8n, ao terminar de capturar as listagens (`FORCAR_RASPAGEM`
+# vem do default `true` do input). O `schedule` diário é só PISO — se o n8n
+# morrer, a vitrine ainda é atualizada uma vez por dia em vez de congelar em
+# silêncio. Mesma lógica do workflow `coletor`.
+
+on:
+  schedule:
+    # 06:20 UTC = 03:20 em Brasília. Fora do horário de pico das lojas, e num
+    # minuto quebrado de propósito: o GitHub enfileira muita coisa em :00.
+    - cron: '20 6 * * *'
+  workflow_dispatch:
+    inputs:
+      forcar:
+        description: 'Raspar agora, sem esperar a janela de 24h'
+        type: boolean
+        default: true
+
+concurrency:
+  # Grupo PRÓPRIO, separado do `coletor`. Compartilhar faria uma raspagem de 10
+  # minutos cancelar o ciclo de coleta que estivesse pendente — exatamente a
+  # interferência que esta separação existe para acabar.
+  group: catalogo
+  cancel-in-progress: false
+
+jobs:
+  raspagem:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Raspar o catálogo
+        env:
+          FIREBASE_SA_BASE64:     ${{ secrets.FIREBASE_SA_BASE64 }}
+          # Só o disparo manual/n8n força. No `schedule`, `inputs` é vazio e
+          # `config._booleano` lê string vazia como false — aí vale a janela
+          # de 24h, e uma execução extra não custa nada.
+          FORCAR_RASPAGEM:        ${{ inputs.forcar }}
+          INTERVALO_RASPAGEM_HORAS: '24'
+          TETO_CENTAVOS:          '100000000'
+          USER_AGENT:             'MonitorPrecos/1.0 (uso pessoal)'
+          CATEGORIAS_RASPAGEM:    'https://www.kabum.com.br/hardware,https://www.kabum.com.br/hardware/ssd-2-5,https://www.kabum.com.br/hardware/kit-hardware,https://www.kabum.com.br/hardware/coolers,https://www.kabum.com.br/hardware/disco-rigido-hd,https://www.kabum.com.br/hardware/fontes,https://www.kabum.com.br/hardware/memoria-ram,https://www.kabum.com.br/hardware/placa-de-video-vga,https://www.kabum.com.br/hardware/placas-mae,https://www.kabum.com.br/hardware/processadores'
+        run: python -m coletor.catalogo

@@ -70,6 +70,24 @@ LIMITE_DO_LOTE = 450  # o Firestore aceita 500 operações; margem de segurança
 # que é o sinal de que ele foi mesmo descontinuado.
 DIAS_NA_VITRINE = 7
 
+# Janela do histórico de preço do CATÁLOGO, guardada dentro do próprio item.
+#
+# POR QUE JANELA ROLANTE E NÃO SÉRIE COMPLETA: a vitrine é um documento por
+# categoria — o maior hoje tem 856 itens e 384 KB, 38% do teto de 1 MiB do
+# Firestore. Guardar uma série diária infinita ali (883 × 365 valores) estouraria
+# o documento em meses, e derrubaria a categoria inteira junto.
+#
+# Sete dias de fechamento + a mínima histórica corrente respondem tudo que a
+# tela pede — média, mínima e máxima da semana, e o selo de menor preço de todos
+# os tempos — em espaço CONSTANTE por item (~175 bytes). O documento maior vai a
+# ~51% do teto e para de crescer.
+#
+# O que se perde: não dá para perguntar "quanto custava em 12/06". Aceitável
+# porque o preço do catálogo é o de TABELA (10% a 31% acima do preço real da
+# página), e a série que decide compra começa quando o usuário acompanha o
+# produto — essa sim vai para `historico`/`diario`, sem teto de 7 dias.
+DIAS_DE_HISTORICO_DO_CATALOGO = 7
+
 STATUS_PENDENTE = "pendente"
 STATUS_OK = "ok"
 STATUS_INVALIDA = "invalida"
@@ -158,6 +176,46 @@ class Produto:
     # A última leitura CONCLUSIVA disse que o produto acabou. Só entra aqui
     # quando a loja informou; falha de leitura não conta (ver `esgotada`).
     sem_estoque: bool = False
+
+
+def historico_do_item(
+    anterior: dict | None, preco_centavos: int | None, agora: datetime
+) -> dict:
+    """Atualiza `h` (7 dias), `min` e `minD` de um item da vitrine.
+
+    Função PURA: recebe a entrada anterior, devolve os três campos novos. Toda a
+    regra fica testável sem Firestore.
+
+    ITEM SEM PREÇO NÃO ENTRA NO HISTÓRICO. Esgotado não tem preço — gravar zero
+    afundaria a média e faria o selo de "menor preço histórico" disparar em
+    produto que ninguém pode comprar. Ausência é ausência, não é preço baixo.
+
+    A MÍNIMA NÃO É PODADA junto com a janela: é ela que sustenta o selo de menor
+    preço de todos os tempos. Ela vive enquanto o item estiver na vitrine — que
+    o expira depois de `DIAS_NA_VITRINE` sem ser visto. Ou seja, "histórico" aqui
+    é "desde que este item apareceu e não sumiu por uma semana".
+    """
+    anterior = anterior or {}
+    historico = dict(anterior.get("h") or {})
+    minimo = anterior.get("min")
+    dia_do_minimo = anterior.get("minD")
+
+    if isinstance(preco_centavos, int) and preco_centavos > 0:
+        hoje = chave_dia(agora)
+        # Última leitura do dia vence: a raspagem roda ~1x/dia, e se rodar duas
+        # a mais recente é a que vale.
+        historico[hoje] = preco_centavos
+        if not isinstance(minimo, int) or preco_centavos < minimo:
+            minimo, dia_do_minimo = preco_centavos, hoje
+
+    corte = chave_dia(agora - timedelta(days=DIAS_DE_HISTORICO_DO_CATALOGO - 1))
+    historico = {dia: v for dia, v in historico.items() if dia >= corte}
+
+    resultado = {"h": historico}
+    if isinstance(minimo, int):
+        resultado["min"] = minimo
+        resultado["minD"] = dia_do_minimo
+    return resultado
 
 
 # ----------------------------------------------------------------------------
@@ -642,6 +700,11 @@ class Repositorio:
                 "t": item.preco_tabela_centavos,
                 "img": item.imagem,
                 "vt": agora,     # visto nesta raspagem
+                # Histórico de 7 dias + mínima histórica, acumulados a partir da
+                # entrada anterior. Ficam DENTRO do item porque o front já lê
+                # este documento para listar — estatística sem leitura extra.
+                **historico_do_item(vitrine.get(item.sku),
+                                    item.preco_centavos, agora),
             }
             vistos_agora.add(item.sku)
             antes = anterior.get(item.sku)

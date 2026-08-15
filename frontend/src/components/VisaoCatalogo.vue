@@ -8,6 +8,9 @@
 import { computed, ref, watch } from "vue";
 import { formatarBRL } from "../dinheiro.js";
 import { casaTermos } from "../busca.js";
+import {
+  estatisticasDaSemana, noMenorPrecoHistorico, variacaoVsSemana,
+} from "../estatisticasCatalogo.js";
 import { nomeDaLojaPorHost, hostDaUrl } from "../lojas.js";
 import { useCatalogo } from "../composables/useCatalogo.js";
 import { useProdutos } from "../composables/useProdutos.js";
@@ -90,6 +93,24 @@ const visiveis = computed(() => {
   return filtrados.value.slice((atual - 1) * POR_PAGINA, atual * POR_PAGINA);
 });
 
+/** Estatísticas da semana por item, calculadas só para a PÁGINA visível.
+ *
+ *  12 itens por vez em vez dos 3.548 do catálogo: o cálculo é barato, mas
+ *  rodá-lo no catálogo inteiro a cada tecla digitada na busca não é.
+ */
+const estatisticas = computed(() => {
+  const mapa = new Map();
+  for (const item of visiveis.value) {
+    const semana = estatisticasDaSemana(item.historico);
+    mapa.set(item.sku, {
+      semana,
+      variacao: variacaoVsSemana(item.preco, semana),
+      recorde: noMenorPrecoHistorico(item),
+    });
+  }
+  return mapa;
+});
+
 function aoFiltrar() { pagina.value = 1; }   // filtrar sempre volta ao começo
 
 function irPara(direcao) {
@@ -138,11 +159,34 @@ function acompanhar(item) {
           <img v-if="item.imagem" :src="item.imagem" alt="" loading="lazy">
           <span v-else class="sem-img" aria-hidden="true">🖥</span>
         </div>
+        <span v-if="estatisticas.get(item.sku)?.recorde" class="recorde">
+          📉 Menor preço histórico
+        </span>
         <span class="titulo" :title="item.nome">{{ item.nome }}</span>
         <span class="preco mono">
           {{ formatarBRL(item.preco) }}
           <s v-if="item.tabela && item.tabela !== item.preco" class="dica">{{ formatarBRL(item.tabela) }}</s>
         </span>
+
+        <!-- Semana: min · média · max. Só aparece com 2+ dias — com um dia só,
+             os três números são o mesmo e a linha não informa nada. -->
+        <div v-if="(estatisticas.get(item.sku)?.semana?.dias || 0) > 1" class="semana">
+          <span class="par">
+            <b>{{ formatarBRL(estatisticas.get(item.sku).semana.menor) }}</b>
+            <i>mín</i>
+          </span>
+          <span class="par">
+            <b>{{ formatarBRL(estatisticas.get(item.sku).semana.media) }}</b>
+            <i>média</i>
+          </span>
+          <span class="par">
+            <b>{{ formatarBRL(estatisticas.get(item.sku).semana.maior) }}</b>
+            <i>máx</i>
+          </span>
+          <span class="dias" :title="`${estatisticas.get(item.sku).semana.dias} dia(s) com preço registrado`">
+            {{ estatisticas.get(item.sku).semana.dias }}d
+          </span>
+        </div>
         <div class="rodape">
           <a :href="item.url" target="_blank" rel="noopener noreferrer">{{ item.loja }} ↗</a>
           <span v-if="item.disponivel === false" class="selo neutro">Esgotado</span>
@@ -216,4 +260,23 @@ function acompanhar(item) {
   gap: 14px; margin-top: 20px;
 }
 .paginacao button:disabled { opacity: 0.35; cursor: default; }
+
+/* Selo de menor preço histórico: verde, no topo do cartão, antes do nome —
+   é a informação que faz o olho parar, e depois dele o nome já é detalhe. */
+.recorde {
+  align-self: flex-start;
+  background: var(--bom); color: #fff;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+  padding: 3px 8px; border-radius: 999px; line-height: 1.4;
+}
+/* min · média · máx da semana. Números pequenos e rótulo menor ainda: é
+   contexto para o preço grande, não concorrente dele. */
+.semana {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  font-size: 11px; color: var(--tinta-fraca);
+}
+.semana .par { display: inline-flex; align-items: baseline; gap: 3px; }
+.semana b { font-family: var(--fonte-mono); font-weight: 600; color: var(--tinta-2); }
+.semana i { font-style: normal; font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; }
+.semana .dias { margin-left: auto; font-family: var(--fonte-mono); }
 </style>

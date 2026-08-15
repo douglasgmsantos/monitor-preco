@@ -134,27 +134,25 @@ async def test_forcar_dentro_da_janela_marca_o_relogio_normalmente():
 
 
 @pytest.mark.asyncio
-async def test_forcar_coleta_nao_forca_a_raspagem():
-    """O pedido explícito: forçar é para os produtos, não para o catálogo.
+async def test_ciclo_nao_raspa_mais_o_catalogo():
+    """A raspagem SAIU do ciclo de coleta (2026-08-15).
 
-    A raspagem varre dezenas de páginas de listagem nas lojas; disparar isso a
-    cada conferência manual gastaria requisição sem informação nova, já que a
-    composição da vitrine muda em dias.
+    Virou `coletor/catalogo.py`, com workflow próprio disparado pelo n8n. Este
+    teste é o que impede alguém de reintroduzi-la aqui "só para simplificar" —
+    e com ela a lentidão que atrasava a coleta e o log misturado.
     """
     repo = RepositorioFalso(
         ultima_coleta=AGORA - timedelta(minutes=5),
-        ultima_raspagem=AGORA - timedelta(hours=1),      # longe das 24h
+        ultima_raspagem=AGORA - timedelta(days=30),      # MUITO vencida
     )
     resumo = await executar_ciclo(
         repo, notificador=object(),
-        cfg=cfg(forcar_coleta=True,
-                categorias_raspagem=("https://www.kabum.com.br/hardware",)),
+        cfg=cfg(categorias_raspagem=("https://www.kabum.com.br/hardware",)),
         agora=AGORA,
     )
 
-    assert resumo["coletou"] is True          # os produtos, sim
-    assert resumo["catalogo"] is None         # o catálogo, não
-    assert repo.gravou_raspagem == []
+    assert "catalogo" not in resumo
+    assert repo.gravou_raspagem == []          # nem tentou
 
 
 # --- leitura do ambiente ----------------------------------------------------
